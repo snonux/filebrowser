@@ -54,6 +54,13 @@ func IsNamedPipe(mode os.FileMode) bool {
 	return mode&os.ModeNamedPipe != 0
 }
 
+// IsOpenable reports whether a file of this mode can be opened without risking
+// a block that nothing can interrupt: regular files and directories only. Named
+// pipes, sockets and device nodes are not.
+func IsOpenable(mode os.FileMode) bool {
+	return mode.IsRegular() || mode.IsDir()
+}
+
 func IsSymlink(mode os.FileMode) bool {
 	return mode&os.ModeSymlink != 0
 }

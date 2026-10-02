@@ -113,6 +113,14 @@ func getFiles(d *data, path, commonPath string) ([]archives.FileInfo, error) {
 		return nil, err
 	}
 
+	// Leave named pipes, sockets and device nodes out of the archive. The
+	// archiver opens every entry, and opening a writer-less FIFO blocks forever
+	// with nothing able to interrupt it. Stat followed any symlink, so a link to
+	// such a file is skipped as well.
+	if !files.IsOpenable(info.Mode()) {
+		return nil, nil
+	}
+
 	var archiveFiles []archives.FileInfo
 
 	if path != commonPath {
@@ -217,6 +225,18 @@ func rawDirHandler(w http.ResponseWriter, r *http.Request, d *data, file *files.
 }
 
 func rawFileHandler(w http.ResponseWriter, r *http.Request, file *files.FileInfo) (int, error) {
+	// Every caller funnels through here — downloads, previews and public
+	// shares — so this is where a file that cannot be served is turned away:
+	// opening a named pipe would block the request forever. Stat rather than
+	// file.Mode, which describes a symlink and not the file it leads to.
+	info, err := file.Fs.Stat(file.Path)
+	if err != nil {
+		return errToStatus(err), err
+	}
+	if !info.Mode().IsRegular() {
+		return http.StatusBadRequest, fmt.Errorf("%s is not a regular file", file.Name)
+	}
+
 	fd, err := file.Fs.Open(file.Path)
 	if err != nil {
 		return http.StatusInternalServerError, err

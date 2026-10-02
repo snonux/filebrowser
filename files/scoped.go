@@ -196,17 +196,40 @@ func (s *ScopedFs) MkdirAll(path string, perm os.FileMode) error {
 }
 
 func (s *ScopedFs) Open(name string) (afero.File, error) {
-	if err := s.guard(name); err != nil {
+	if err := s.guardOpen(name); err != nil {
 		return nil, err
 	}
 	return s.base.Open(name)
 }
 
 func (s *ScopedFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	if err := s.guard(name); err != nil {
+	if err := s.guardOpen(name); err != nil {
 		return nil, err
 	}
 	return s.base.OpenFile(name, flag, perm)
+}
+
+// guardOpen is guard plus a refusal to open anything that is neither a regular
+// file nor a directory. Opening a named pipe blocks until a peer shows up, and
+// neither a timeout nor a cancelled request can interrupt it, so a single FIFO
+// in a served tree would pin a goroutine per request forever; sockets and
+// device nodes have no business being read or written through a file manager
+// either. A path that does not exist yet is fine: it is about to be created.
+func (s *ScopedFs) guardOpen(name string) error {
+	if err := s.guard(name); err != nil {
+		return err
+	}
+
+	// Stat, not Lstat: what matters is what the open would reach, so a symlink
+	// to a named pipe is refused just like the pipe itself.
+	info, err := s.base.Stat(name)
+	if err != nil {
+		return nil
+	}
+	if !IsOpenable(info.Mode()) {
+		return &os.PathError{Op: "open", Path: name, Err: os.ErrPermission}
+	}
+	return nil
 }
 
 func (s *ScopedFs) Remove(name string) error {

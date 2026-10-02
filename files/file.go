@@ -220,7 +220,10 @@ func (i *FileInfo) RealPath() string {
 }
 
 func (i *FileInfo) detectType(modify, saveContent, readHeader bool, calcImgRes bool) error {
-	if IsNamedPipe(i.Mode) {
+	// Detection opens the file to sniff its header, read its content or decode
+	// an image, and opening a named pipe blocks forever. Never open anything
+	// that is not a regular file.
+	if !i.isRegular() {
 		i.Type = "blob"
 		return nil
 	}
@@ -284,6 +287,19 @@ func (i *FileInfo) detectType(modify, saveContent, readHeader bool, calcImgRes b
 	}
 
 	return nil
+}
+
+// isRegular reports whether the file is a regular file once a symbolic link is
+// followed. Mode describes the link itself when the FileInfo was built from a
+// single path, so a link has to be stat-ed to learn what it leads to; a link
+// that cannot be followed is not regular.
+func (i *FileInfo) isRegular() bool {
+	if !IsSymlink(i.Mode) {
+		return i.Mode.IsRegular()
+	}
+
+	info, err := i.Fs.Stat(i.Path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func calculateImageResolution(fSys afero.Fs, filePath string) (*ImageResolution, error) {
@@ -443,7 +459,9 @@ func (i *FileInfo) readListing(checker rules.Checker, readHeader bool, calcImgRe
 			currentDir: dir,
 		}
 
-		if !file.IsDir && strings.HasPrefix(mime.TypeByExtension(file.Extension), "image/") && calcImgRes {
+		// Only regular files are decoded: a named pipe called "x.png" would
+		// block the listing on open.
+		if file.Mode.IsRegular() && strings.HasPrefix(mime.TypeByExtension(file.Extension), "image/") && calcImgRes {
 			resolution, err := calculateImageResolution(file.Fs, file.Path)
 			if err != nil {
 				log.Printf("Error calculating resolution for image %s: %v", file.Path, err)
