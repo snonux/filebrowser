@@ -469,6 +469,13 @@ var resourceGetRecursiveHandler = withUser(func(w http.ResponseWriter, r *http.R
 		rootPath = "/"
 	}
 
+	// The walk below only checks the entries it finds, so the directory it
+	// starts from has to be authorized here, like every other handler does
+	// before touching the path it was given.
+	if !d.Check(rootPath) {
+		return http.StatusForbidden, nil
+	}
+
 	// Make sure the root itself exists and is a directory.
 	info, err := d.user.Fs.Stat(rootPath)
 	if err != nil {

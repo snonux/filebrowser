@@ -79,3 +79,27 @@ func TestResourceRecursiveStopsWhenClientDisconnects(t *testing.T) {
 		t.Fatalf("wrote a response for a disconnected client: %q", body)
 	}
 }
+
+// The walk authorizes the entries it finds, not the directory it starts from,
+// so a rule-denied directory must be refused up front rather than answered as
+// an existing, apparently empty one.
+func TestResourceRecursiveRefusesRuleDeniedRoot(t *testing.T) {
+	userScope := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(userScope, "secret"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Download: true}
+	st := denyRuleStorage(t, userScope, "/secret", perm, key)
+	handler := handle(resourceGetRecursiveHandler, "/api/resources/recursive", st, &settings.Server{})
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/resources/recursive/secret", http.NoBody)
+	req.Header.Set("X-Auth", signToken(t, perm, key))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body = %q, want 403", rec.Code, rec.Body.String())
+	}
+}
