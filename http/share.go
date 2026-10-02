@@ -14,6 +14,7 @@ import (
 	"time"
 
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
+	"github.com/filebrowser/filebrowser/v2/files"
 	"github.com/filebrowser/filebrowser/v2/share"
 	"github.com/filebrowser/filebrowser/v2/users"
 	"golang.org/x/crypto/bcrypt"
@@ -118,13 +119,9 @@ func getSharesForAdminPath(d *data, path string) ([]*share.Link, error) {
 	owners := make(map[uint]*users.User)
 	filtered := make([]*share.Link, 0, len(links))
 	for _, link := range links {
-		owner, ok := owners[link.UserID]
-		if !ok {
-			owner, err = d.store.Users.Get(d.server.Root, d.server.FollowExternalSymlinks, link.UserID)
-			if err != nil && !errors.Is(err, fberrors.ErrNotExist) {
-				return nil, err
-			}
-			owners[link.UserID] = owner // owner is nil on ErrNotExist
+		owner, err := shareOwner(d, owners, link.UserID)
+		if err != nil {
+			return nil, err
 		}
 		if owner != nil && filepath.Clean(owner.FullPath(link.Path)) == adminPath {
 			filtered = append(filtered, link)
@@ -132,6 +129,88 @@ func getSharesForAdminPath(d *data, path string) ([]*share.Link, error) {
 	}
 
 	return filtered, nil
+}
+
+// shareOwner returns the user owning a share, or nil if that user no longer
+// exists. Lookups are memoized in owners, since one user usually owns many
+// shares.
+func shareOwner(d *data, owners map[uint]*users.User, id uint) (*users.User, error) {
+	if owner, ok := owners[id]; ok {
+		return owner, nil
+	}
+
+	owner, err := d.store.Users.Get(d.server.Root, d.server.FollowExternalSymlinks, id)
+	if err != nil && !errors.Is(err, fberrors.ErrNotExist) {
+		return nil, err
+	}
+	owners[id] = owner // owner is nil on ErrNotExist
+	return owner, nil
+}
+
+// deleteSharesUnder removes every public share that points at path, or at
+// something below it, in the current user's filesystem. It is called when that
+// path stops naming what was shared — it was deleted or renamed — because a
+// share is resolved lazily on each request: a record left behind would start
+// serving whatever unrelated file later appears under the old name.
+//
+// Shares are matched by the on-disk location they resolve to through their own
+// owner's scope, not by the stored path string. That removes the shares other
+// users hold on the same file (an administrator deleting a user's shared file),
+// while leaving alone a share whose scope-relative path merely collides with
+// the one being removed but names a different file.
+func deleteSharesUnder(d *data, path string) error {
+	// Without a disk-backed filesystem there is no on-disk location to compare,
+	// so fall back to matching the user's own shares by path.
+	if files.BasePath(d.user.Fs) == nil {
+		return d.store.Share.DeleteWithPathPrefix(path, d.user.ID)
+	}
+
+	links, err := d.store.Share.All()
+	if errors.Is(err, fberrors.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	target := d.shareLocation(d.user, path)
+	owners := make(map[uint]*users.User)
+	for _, link := range links {
+		owner, ownerErr := shareOwner(d, owners, link.UserID)
+		if ownerErr != nil {
+			err = errors.Join(err, ownerErr)
+			continue
+		}
+		if owner == nil || !isPathWithin(d.shareLocation(owner, link.Path), target) {
+			continue
+		}
+
+		err = errors.Join(err, d.store.Share.Delete(link.Hash))
+	}
+
+	return err
+}
+
+// shareLocation returns the on-disk location a path names for a given user, in
+// a form that can be compared across users. On a case-insensitive filesystem
+// names differing only in case are the same file, so they are folded.
+func (d *data) shareLocation(u *users.User, path string) string {
+	location := filepath.Clean(u.FullPath(path))
+	if d.server.CaseInsensitiveFs {
+		location = strings.ToLower(location)
+	}
+	return location
+}
+
+// isPathWithin reports whether location is dir itself or lies below it.
+func isPathWithin(location, dir string) bool {
+	if location == dir {
+		return true
+	}
+	if !strings.HasSuffix(dir, string(filepath.Separator)) {
+		dir += string(filepath.Separator)
+	}
+	return strings.HasPrefix(location, dir)
 }
 
 var shareDeleteHandler = withPermShare(func(_ http.ResponseWriter, r *http.Request, d *data) (int, error) {

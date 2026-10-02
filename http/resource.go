@@ -107,7 +107,9 @@ func resourceDeleteHandler(fileCache FileCache) handleFunc {
 			return errToStatus(err), err
 		}
 
-		err = d.store.Share.DeleteWithPathPrefix(file.Path, d.user.ID)
+		// Drop the shares that pointed at what is being deleted, whoever owns
+		// them: the file may be shared by another user whose scope reaches it.
+		err = deleteSharesUnder(d, file.Path)
 		if err != nil {
 			log.Printf("WARNING: Error(s) occurred while deleting associated shares with file: %s", err)
 		}
