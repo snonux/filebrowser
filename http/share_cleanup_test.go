@@ -3,6 +3,7 @@ package fbhttp
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -140,5 +141,49 @@ func TestDeleteRemovesSharesOfOtherUsers(t *testing.T) {
 		if !f.exists(hash) {
 			t.Errorf("share %q on an unrelated file was deleted", hash)
 		}
+	}
+}
+
+// Regression for GHSA-m8v4-4w34-rrvf: renaming a shared path left its share
+// record behind, so the old link came back to life for any file later created
+// under the old name.
+func TestRenameRemovesSharesOfTheOldPath(t *testing.T) {
+	f := newShareCleanupFixture(t)
+	f.write(t, "a.txt")
+	f.write(t, "dir/inner.txt")
+	f.write(t, "keep.txt")
+
+	f.share(t, "file", f.owner, "/a.txt")
+	f.share(t, "inner", f.owner, "/dir/inner.txt")
+	f.share(t, "keep", f.owner, "/keep.txt")
+
+	patch := resourcePatchHandler(diskcache.NewNoOp())
+	rename := func(src, dst string) {
+		t.Helper()
+		target := src + "?action=rename&destination=" + url.QueryEscape(dst)
+		if code := f.do(t, patch, f.owner, http.MethodPatch, target); code != http.StatusOK {
+			t.Fatalf("rename %s -> %s = %d, want 200", src, dst, code)
+		}
+	}
+	rename("/a.txt", "/b.txt")
+	rename("/dir", "/dir2")
+
+	for _, hash := range []string{"file", "inner"} {
+		if f.exists(hash) {
+			t.Errorf("VULNERABLE: share %q survived the rename of its path", hash)
+		}
+	}
+	if !f.exists("keep") {
+		t.Error("share on an unrelated file was deleted")
+	}
+
+	// A copy leaves the source where it is, so its shares must stay.
+	f.share(t, "copied", f.owner, "/keep.txt")
+	target := "/keep.txt?action=copy&destination=" + url.QueryEscape("/keep-copy.txt")
+	if code := f.do(t, patch, f.owner, http.MethodPatch, target); code != http.StatusOK {
+		t.Fatalf("copy = %d, want 200", code)
+	}
+	if !f.exists("copied") {
+		t.Error("share was deleted by a copy of its file")
 	}
 }

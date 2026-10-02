@@ -432,7 +432,20 @@ func patchAction(ctx context.Context, action, src, dst string, d *data, fileCach
 			return err
 		}
 
-		return fileutils.MoveFile(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode)
+		err = fileutils.MoveFile(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode)
+		if err != nil {
+			return err
+		}
+
+		// The old path no longer names what was shared. Drop its shares, as a
+		// delete does, or the old links would serve whatever file is created
+		// under that name next. The move itself succeeded, so a cleanup failure
+		// is reported in the log rather than turned into a failed rename.
+		if shareErr := deleteSharesUnder(d, src); shareErr != nil {
+			log.Printf("WARNING: Error(s) occurred while deleting associated shares with file: %s", shareErr)
+		}
+
+		return nil
 	default:
 		return fmt.Errorf("unsupported action %s: %w", action, fberrors.ErrInvalidRequestParams)
 	}
