@@ -12,6 +12,13 @@ import (
 	"github.com/filebrowser/filebrowser/v2/files"
 )
 
+// maxSubtitleConversionSize bounds the subtitle files converted to WebVTT.
+// Conversion holds the file, a normalized copy, the parsed cues and the
+// rendered output in memory at once, so its cost is a multiple of the file
+// size. Real subtitle files are well under a megabyte; 10MB matches the cap
+// files.detectType applies before loading text content.
+const maxSubtitleConversionSize = 10 << 20
+
 var srtLineBreakTag = regexp.MustCompile(`(?i)<br(?:\s+[^>]*)?\s*/?>`)
 
 var subtitleHandler = withUser(func(w http.ResponseWriter, r *http.Request, d *data) (int, error) {
@@ -51,18 +58,9 @@ func subtitleFileHandler(w http.ResponseWriter, r *http.Request, file *files.Fil
 	defer fd.Close()
 
 	// load subtitle for conversion to vtt
-	var sub *astisub.Subtitles
-	if strings.HasSuffix(file.Name, ".srt") {
-		content, readErr := io.ReadAll(fd)
-		if readErr != nil {
-			return http.StatusInternalServerError, readErr
-		}
-		sub, err = astisub.ReadFromSRT(bytes.NewReader(normalizeSRTLineBreaks(content)))
-	} else if strings.HasSuffix(file.Name, ".ass") || strings.HasSuffix(file.Name, ".ssa") {
-		sub, err = astisub.ReadFromSSA(fd)
-	}
-	if err != nil {
-		return http.StatusInternalServerError, err
+	sub, status, err := loadSubtitle(fd, file)
+	if err != nil || status != 0 {
+		return status, err
 	}
 
 	setContentDisposition(w, r, file)
@@ -85,6 +83,44 @@ func subtitleFileHandler(w http.ResponseWriter, r *http.Request, file *files.Fil
 	}
 	http.ServeContent(w, r, file.Name, file.ModTime, bytes.NewReader(buf.Bytes()))
 	return 0, nil
+}
+
+// loadSubtitle parses the formats that have to be converted to WebVTT. It
+// returns a nil subtitle for a file that is served as is (.vtt), and a non-zero
+// status when the file cannot be converted.
+//
+// The size is checked twice: against the stat size, to refuse an oversized file
+// without reading it, and through a limited reader, so a file that grew after
+// the stat (or whose stat size is unknown) still cannot exceed the bound.
+func loadSubtitle(fd io.Reader, file *files.FileInfo) (*astisub.Subtitles, int, error) {
+	isSRT := strings.HasSuffix(file.Name, ".srt")
+	if !isSRT && !strings.HasSuffix(file.Name, ".ass") && !strings.HasSuffix(file.Name, ".ssa") {
+		return nil, 0, nil
+	}
+
+	if file.Size > maxSubtitleConversionSize {
+		return nil, http.StatusRequestEntityTooLarge, nil
+	}
+
+	content, err := io.ReadAll(io.LimitReader(fd, maxSubtitleConversionSize+1))
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	if len(content) > maxSubtitleConversionSize {
+		return nil, http.StatusRequestEntityTooLarge, nil
+	}
+
+	var sub *astisub.Subtitles
+	if isSRT {
+		sub, err = astisub.ReadFromSRT(bytes.NewReader(normalizeSRTLineBreaks(content)))
+	} else {
+		sub, err = astisub.ReadFromSSA(bytes.NewReader(content))
+	}
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+
+	return sub, 0, nil
 }
 
 func normalizeSRTLineBreaks(content []byte) []byte {
