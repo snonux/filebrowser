@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/filebrowser/filebrowser/v2/files"
@@ -54,6 +55,29 @@ func keepUploadActive(cache UploadCache, filePath string) func() {
 	return func() {
 		close(stop)
 	}
+}
+
+// tusPatchesInFlight holds the uploads that currently have a PATCH being
+// written, keyed by the on-disk path of the upload.
+//
+// A PATCH checks that its offset matches the file size and then appends. Those
+// two steps are not atomic, so several concurrent PATCHes at the same offset
+// would all pass the check and all append, writing a multiple of the declared
+// Upload-Length. Admitting one PATCH per upload at a time closes that window.
+//
+// The set is per process. Replicas sharing storage behind a Redis upload cache
+// would each hold their own, so this does not serialize across replicas.
+var tusPatchesInFlight sync.Map
+
+// lockUpload claims the upload at key for one PATCH. It reports false, without
+// waiting, when another PATCH already holds it: the TUS protocol has the client
+// retry, re-reading the offset first. On success the returned function releases
+// the claim.
+func lockUpload(key string) (unlock func(), ok bool) {
+	if _, busy := tusPatchesInFlight.LoadOrStore(key, struct{}{}); busy {
+		return nil, false
+	}
+	return func() { tusPatchesInFlight.Delete(key) }, true
 }
 
 func tusPostHandler(cache UploadCache) handleFunc {
@@ -202,6 +226,14 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 		return http.StatusBadRequest, fmt.Errorf("invalid upload offset")
 	}
 
+	// Taken before the file is stat-ed, so the size the offset is compared
+	// against cannot change until this chunk has been written.
+	unlock, ok := lockUpload(uploadLockKey(d, r.URL.Path))
+	if !ok {
+		return http.StatusLocked, fmt.Errorf("another chunk of %s is being written", r.URL.Path)
+	}
+	defer unlock()
+
 	file, err := files.NewFileInfo(&files.FileOptions{
 		Fs:         d.user.Fs,
 		Path:       r.URL.Path,
@@ -325,6 +357,17 @@ func tusDeleteHandler(cache UploadCache) handleFunc {
 
 		return http.StatusNoContent, nil
 	})
+}
+
+// uploadLockKey identifies an upload across requests and users: the on-disk
+// path, so two users whose scopes reach the same file contend for one lock. A
+// filesystem that is not disk-backed has no such path; the virtual one is then
+// unique within it.
+func uploadLockKey(d *data, path string) string {
+	if files.BasePath(d.user.Fs) == nil {
+		return path
+	}
+	return filepath.Clean(d.user.FullPath(path))
 }
 
 func getUploadLength(r *http.Request) (int64, error) {
