@@ -25,7 +25,7 @@ var (
 	_ afero.Lstater = (*ScopedFs)(nil)
 )
 
-// maxSymlinkHops bounds how many dangling symlinks within() will follow before
+// maxSymlinkHops bounds how many dangling symlinks ResolvePath will follow before
 // giving up, so a pathological chain cannot loop forever. It mirrors the kernel
 // MAXSYMLINKS limit; the operation is rejected once the bound is exceeded.
 const maxSymlinkHops = 255
@@ -86,60 +86,13 @@ func (s *ScopedFs) guard(name string) error {
 // links — stays within the scoped root. It exists to stop a symlink that lives
 // lexically inside the scope but points outside it from being followed for
 // reads, writes, or shares.
-//
-// Paths that do not exist yet (e.g. a brand-new file being created) are
-// validated against their nearest existing ancestor, so legitimate new files
-// are always allowed. A dangling symlink — a link whose target does not exist
-// yet — is the exception: it is followed to where it points and validated
-// there, so a write cannot dereference the link to create a file outside the
-// scope.
 func (s *ScopedFs) within(p string) (bool, error) {
 	root, err := filepath.EvalSymlinks(afero.FullBaseFsPath(s.base, "/"))
 	if err != nil {
 		return false, err
 	}
 
-	target := afero.FullBaseFsPath(s.base, p)
-	resolved, err := filepath.EvalSymlinks(target)
-	// When target does not resolve, work out where the operation would actually
-	// land. A non-existent regular path resolves to the file that would be
-	// created inside its containing directory, so walk up to the nearest
-	// existing ancestor and validate that. But when target itself is a dangling
-	// symlink, follow it one level instead: validating its lexical parent would
-	// wrongly accept a link pointing outside the scope, letting a write follow
-	// the link and create the file out of bounds.
-	for hops := 0; errors.Is(err, fs.ErrNotExist); {
-		if fi, lerr := os.Lstat(target); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
-			hops++
-			if hops > maxSymlinkHops {
-				return false, os.ErrPermission
-			}
-			dest, rerr := os.Readlink(target)
-			if rerr != nil {
-				return false, rerr
-			}
-			if !filepath.IsAbs(dest) {
-				// Resolve the link relative to the directory that really contains
-				// it, not its lexical parent: a symlinked ancestor could otherwise
-				// shift the computed target back into scope while the real write
-				// lands outside it. The parent is guaranteed to resolve here
-				// because os.Lstat above already traversed it.
-				base, berr := filepath.EvalSymlinks(filepath.Dir(target))
-				if berr != nil {
-					return false, berr
-				}
-				dest = filepath.Join(base, dest)
-			}
-			target = filepath.Clean(dest)
-		} else {
-			parent := filepath.Dir(target)
-			if parent == target {
-				break
-			}
-			target = parent
-		}
-		resolved, err = filepath.EvalSymlinks(target)
-	}
+	resolved, err := ResolvePath(afero.FullBaseFsPath(s.base, p))
 	if err != nil {
 		return false, err
 	}
@@ -154,6 +107,71 @@ func (s *ScopedFs) within(p string) (bool, error) {
 	}
 
 	return resolved == root || strings.HasPrefix(resolved, prefix), nil
+}
+
+// ResolvePath returns the on-disk location that target names once every
+// symbolic link on the way is followed. It is what an operation on target would
+// really touch, so both the scope check and the rule check decide on it rather
+// than on the name the request used.
+//
+// Paths that do not exist yet (e.g. a brand-new file being created) resolve to
+// their nearest existing ancestor with the missing components appended, so
+// legitimate new files resolve to where they would be created. A dangling
+// symlink — a link whose target does not exist yet — is the exception: it is
+// followed to where it points, so a write cannot dereference the link to create
+// a file somewhere the caller did not validate.
+func ResolvePath(target string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(target)
+
+	// rest collects the trailing components that do not exist yet, so they can
+	// be re-attached to the resolved ancestor.
+	rest := ""
+
+	// When target does not resolve, work out where the operation would actually
+	// land. A non-existent regular path resolves to the file that would be
+	// created inside its containing directory, so walk up to the nearest
+	// existing ancestor. But when target itself is a dangling symlink, follow it
+	// one level instead: resolving its lexical parent would wrongly place the
+	// operation next to the link, while the real write follows the link and
+	// lands wherever it points.
+	for hops := 0; errors.Is(err, fs.ErrNotExist); {
+		if fi, lerr := os.Lstat(target); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			hops++
+			if hops > maxSymlinkHops {
+				return "", os.ErrPermission
+			}
+			dest, rerr := os.Readlink(target)
+			if rerr != nil {
+				return "", rerr
+			}
+			if !filepath.IsAbs(dest) {
+				// Resolve the link relative to the directory that really contains
+				// it, not its lexical parent: a symlinked ancestor could otherwise
+				// shift the computed target back into scope while the real write
+				// lands outside it. The parent is guaranteed to resolve here
+				// because os.Lstat above already traversed it.
+				base, berr := filepath.EvalSymlinks(filepath.Dir(target))
+				if berr != nil {
+					return "", berr
+				}
+				dest = filepath.Join(base, dest)
+			}
+			target = filepath.Clean(dest)
+		} else {
+			parent := filepath.Dir(target)
+			if parent == target {
+				break
+			}
+			rest = filepath.Join(filepath.Base(target), rest)
+			target = parent
+		}
+		resolved, err = filepath.EvalSymlinks(target)
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(resolved, rest), nil
 }
 
 func (s *ScopedFs) Create(name string) (afero.File, error) {

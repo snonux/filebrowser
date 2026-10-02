@@ -4,10 +4,14 @@ import (
 	"log"
 	"net/http"
 	gopath "path"
+	"path/filepath"
 	"strconv"
+	"strings"
 
+	"github.com/spf13/afero"
 	"github.com/tomasen/realip"
 
+	"github.com/filebrowser/filebrowser/v2/files"
 	"github.com/filebrowser/filebrowser/v2/rules"
 	"github.com/filebrowser/filebrowser/v2/runner"
 	"github.com/filebrowser/filebrowser/v2/settings"
@@ -31,6 +35,13 @@ type data struct {
 	// original scope — are still matched against the real path instead of the
 	// rebased one. Empty for regular requests.
 	checkerPrefix string
+
+	// scopeRoot is the on-disk root of the user's original scope. It is set
+	// together with checkerPrefix, when the user's filesystem is rebased, so
+	// that a symlink target can still be expressed relative to the scope the
+	// rules are written for. Empty for regular requests, where the user's
+	// filesystem is rooted at the scope itself.
+	scopeRoot string
 }
 
 // Check implements rules.Checker.
@@ -45,9 +56,30 @@ func (d *data) Check(path string) bool {
 // CheckRules reports whether the global and user rules allow path. Unlike
 // Check, it ignores HideDotfiles: hiding dotfiles is a display preference, so
 // it must not stop a user from operating on a tree that contains one.
+//
+// The rules have to allow both the path as requested and the object it really
+// names. The filesystem follows symbolic links, so "/allowed/link/secret.txt"
+// can open a file a rule denies as "/denied/secret.txt"; matching only the
+// requested name would let any in-scope link alias a way around a deny rule.
 func (d *data) CheckRules(path string) bool {
-	path = d.rulePath(path)
+	if len(d.settings.Rules) == 0 && len(d.user.Rules) == 0 {
+		return true
+	}
 
+	if !d.rulesAllow(d.rulePath(path)) {
+		return false
+	}
+
+	if resolved, ok := d.resolvedRulePath(path); ok {
+		return d.rulesAllow(resolved)
+	}
+
+	return true
+}
+
+// rulesAllow evaluates the global and then the user rules against a canonical
+// scope-relative path. Later rules override earlier ones.
+func (d *data) rulesAllow(path string) bool {
 	allow := true
 	for _, rule := range d.settings.Rules {
 		if rule.Matches(path, d.server.CaseInsensitiveFs) {
@@ -62,6 +94,40 @@ func (d *data) CheckRules(path string) bool {
 	}
 
 	return allow
+}
+
+// resolvedRulePath returns the canonical scope-relative path of the object path
+// names once symbolic links are followed. It reports false when there is
+// nothing more to check: the filesystem is not disk-backed, the path cannot be
+// resolved (the operation on it then fails by itself), or the target lies
+// outside the scope — which rules, being scope-relative, cannot describe, and
+// which ScopedFs refuses anyway unless external symlinks are explicitly allowed.
+func (d *data) resolvedRulePath(path string) (string, bool) {
+	base := files.BasePath(d.user.Fs)
+	if base == nil {
+		return "", false
+	}
+
+	root := d.scopeRoot
+	if root == "" {
+		root = afero.FullBaseFsPath(base, "/")
+	}
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false
+	}
+
+	resolved, err := files.ResolvePath(afero.FullBaseFsPath(base, slashClean(path)))
+	if err != nil {
+		return "", false
+	}
+
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+
+	return slashClean(rel), true
 }
 
 // rulePath canonicalizes path into the form the rules are written in.
