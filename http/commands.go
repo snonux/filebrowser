@@ -17,6 +17,11 @@ import (
 
 const (
 	WSWriteDeadline = 10 * time.Second
+
+	// maxCommandMessageSize bounds a single WebSocket message. gorilla/websocket
+	// applies no limit of its own, so without one a client can make the server
+	// buffer a message of any size. A command line is tiny; 64KiB is generous.
+	maxCommandMessageSize = 64 << 10
 )
 
 var upgrader = websocket.Upgrader{
@@ -45,6 +50,19 @@ var commandsHandler = withUser(func(w http.ResponseWriter, r *http.Request, d *d
 	}
 	defer conn.Close()
 
+	// Refuse before reading anything: the route is registered even when command
+	// execution is disabled, so a user who may not run commands must not be able
+	// to make the server read (and buffer) a message first.
+	if !d.server.EnableExec || !d.user.Perm.Execute {
+		if err := conn.WriteMessage(websocket.TextMessage, cmdNotAllowed); err != nil {
+			wsErr(conn, r, http.StatusInternalServerError, err)
+		}
+
+		return 0, nil
+	}
+
+	conn.SetReadLimit(maxCommandMessageSize)
+
 	var raw string
 
 	for {
@@ -58,15 +76,6 @@ var commandsHandler = withUser(func(w http.ResponseWriter, r *http.Request, d *d
 		if raw != "" {
 			break
 		}
-	}
-
-	// Fail fast
-	if !d.server.EnableExec || !d.user.Perm.Execute {
-		if err := conn.WriteMessage(websocket.TextMessage, cmdNotAllowed); err != nil {
-			wsErr(conn, r, http.StatusInternalServerError, err)
-		}
-
-		return 0, nil
 	}
 
 	command, name, err := runner.ParseCommand(d.settings, raw)
