@@ -153,6 +153,13 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 			Checker:    d,
 		})
 		if err == nil {
+			// A directory cannot be overwritten by an upload. Without this the
+			// write below fails on it and the failure cleanup would then remove
+			// the directory, bypassing Perm.Delete and the descendant rules.
+			if file.IsDir {
+				return http.StatusBadRequest, fmt.Errorf("cannot upload to a directory %s", r.URL.Path)
+			}
+
 			if r.URL.Query().Get("override") != "true" {
 				return http.StatusConflict, nil
 			}
@@ -180,7 +187,10 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 		}, "upload", r.URL.Path, "", d.user)
 
 		if err != nil {
-			_ = d.user.Fs.RemoveAll(r.URL.Path)
+			// Drop the partial file. Remove, not RemoveAll: the cleanup only ever
+			// owns the single file it tried to write, so it must never recurse
+			// should the path turn out to be a directory after all.
+			_ = d.user.Fs.Remove(r.URL.Path)
 		}
 
 		return errToStatus(err), err
