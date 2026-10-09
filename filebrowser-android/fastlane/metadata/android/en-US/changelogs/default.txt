@@ -1,0 +1,1 @@
+First release: browse, upload, download, edit, share and manage files on a File Browser server.
