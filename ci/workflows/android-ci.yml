@@ -1,0 +1,53 @@
+# Checks for the Android client in filebrowser-android/. Move it to
+# .github/workflows/ to enable it; an agent's token cannot write there.
+#
+# Besides analysis and unit tests it builds a debug APK (the cloud sessions
+# that wrote the app have no Android SDK) and runs the end-to-end test against
+# a server built from this commit.
+name: Android CI
+
+on:
+  push:
+    branches: [master]
+    paths: ['filebrowser-android/**', 'http/**', 'ci/workflows/android-ci.yml']
+  pull_request:
+    paths: ['filebrowser-android/**', 'http/**', 'ci/workflows/android-ci.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: filebrowser-android
+    steps:
+      - uses: actions/checkout@v4
+      - id: flutter
+        run: echo "version=$(tr -d '[:space:]' < .flutter-version)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          channel: stable
+          cache: true
+      - name: Analyze and unit tests
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+      - name: Debug APK
+        run: flutter build apk --debug
+      - name: End-to-end test (Linux desktop build against a local server)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build libgtk-3-dev libsecret-1-dev xvfb
+          ./test/e2e/run_e2e.sh

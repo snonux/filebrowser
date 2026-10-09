@@ -1,0 +1,42 @@
+name: filebrowser_android
+description: File Browser Android client
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # dio: HTTP client with interceptors, used for every File Browser API call.
+  dio: ^5.7.0
+  # flutter_secure_storage: keeps the JWT and the remembered password in the
+  # Android keystore-backed encrypted storage.
+  flutter_secure_storage: ^9.2.2
+  # flutter_riverpod: state management, same as the Player app.
+  flutter_riverpod: ^2.6.1
+  # go_router: declarative routing with an auth redirect.
+  go_router: ^14.8.1
+  # shared_preferences: non-secret settings (server URL, theme, sort order).
+  shared_preferences: ^2.3.2
+  # package_info_plus: shows the installed version in Settings.
+  package_info_plus: ^9.0.1
+  # file_picker: Android's document picker for choosing files to upload.
+  file_picker: ^10.3.3
+  # path_provider: where downloaded files are stored on the device.
+  path_provider: ^2.1.5
+  # open_filex: hands a downloaded file to the app Android picks for its type.
+  open_filex: ^4.7.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  # crypto: checksums of uploaded and downloaded files in the e2e test.
+  crypto: ^3.0.6
+
+flutter:
+  uses-material-design: true

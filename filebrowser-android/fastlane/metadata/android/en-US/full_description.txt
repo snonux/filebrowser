@@ -1,0 +1,15 @@
+File Browser is the Android client for a self-hosted File Browser server. It talks to the same API as the server's web interface, so it works with an unmodified server.
+
+* Browse folders with image thumbnails, sort by name, size or date, and show or hide dotfiles
+* Upload files from any app's storage through Android's file picker; large uploads use resumable tus uploads and continue after a dropped chunk
+* Download files, or whole folders as a zip, and open them in another app
+* View images full screen and swipe through a folder
+* Edit text files
+* Create folders and files, rename, copy, move and delete, one item or many at once
+* Search below the current folder
+* Create share links with an optional expiry and password, and manage existing links
+* Shows disk usage and respects the account's permissions
+* Stay signed in: the password is kept encrypted on the device to sign in again when the server's short-lived session expires
+* Works behind a reverse proxy that asks for a username and password (HTTP basic auth)
+
+Source code and releases: https://github.com/snonux/filebrowser
