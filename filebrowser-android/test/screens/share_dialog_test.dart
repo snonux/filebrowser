@@ -444,8 +444,10 @@ void main() {
     final server = _ShareServer([_link('gone'), _link('open')]);
     await pumpApp(tester, server);
     await openShare(tester);
-    // The failed delete fetches the list again; the answer is late and was
-    // taken before the link below was created.
+    // The link is gone on the server, so its delete fails and the list is
+    // fetched again; the answer is late and was taken before the link below
+    // was created.
+    server.links.removeWhere((l) => l['hash'] == 'gone');
     server.deleteStatus = 404;
     server.staleList = [_link('open')];
     final reload = Completer<void>();
@@ -460,6 +462,10 @@ void main() {
     await settle(tester);
     expect(find.text('http://fb.local/base/share/new1'), findsOneWidget);
     expect(find.text('http://fb.local/base/share/open'), findsOneWidget);
+    // The outdated list was asked for again, so the link that the server no
+    // longer has is gone as well.
+    expect(server.requests('GET'), hasLength(3));
+    expect(find.text('http://fb.local/base/share/gone'), findsNothing);
   });
 
   testWidgets('a late list does not bring back a link deleted meanwhile',
@@ -481,6 +487,8 @@ void main() {
 
     reload.complete();
     await settle(tester);
+    // The outdated list was asked for again: failed, late, and now current.
+    expect(server.requests('GET'), hasLength(3));
     await tap(tester, find.text('Cancel'));
     // Nothing is listed, so cancelling the form closed the dialog.
     expect(find.text('http://fb.local/base/share/new1'), findsNothing);
@@ -510,6 +518,65 @@ void main() {
                 matching: find.byType(IconButton)))
             .onPressed,
         isNotNull);
+  });
+
+  testWidgets('a late list that is asked for again shows the other links',
+      (tester) async {
+    final server = _ShareServer([_link('old')])..listStatus = 500;
+    await pumpApp(tester, server);
+    await openShare(tester);
+    server.listStatus = null;
+    final reload = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'GET' ? reload.future : null;
+    await tap(tester, find.text('Create link'));
+    // Deleting the new link outdates the list that is under way.
+    await tap(tester, find.byTooltip('Delete link for new1'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+
+    reload.complete();
+    await settle(tester);
+    // The link that was there all along is found after all, and the form
+    // that the delete opened stays open.
+    expect(find.text('Create link'), findsOneWidget);
+    await tap(tester, find.text('Cancel'));
+    expect(find.text('http://fb.local/base/share/old'), findsOneWidget);
+    expect(find.text('http://fb.local/base/share/new1'), findsNothing);
+    expect(find.textContaining('there may be more than are listed here'),
+        findsNothing);
+  });
+
+  testWidgets('a running delete stays with its link when another is deleted',
+      (tester) async {
+    final server = _ShareServer([
+      _link('first', expire: 4102444700),
+      _link('second', expire: 4102444800),
+    ]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    final held = Completer<void>();
+    server.adapter.hold = (o) =>
+        o.method == 'DELETE' && o.uri.path.endsWith('/second')
+            ? held.future
+            : null;
+    await tap(tester, find.byTooltip('Delete link for second'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    // Removing the row above moves the second one up.
+    await tap(tester, find.byTooltip('Delete link for first'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    expect(find.text('http://fb.local/base/share/first'), findsNothing);
+    expect(
+        tester
+            .widget<IconButton>(find.ancestor(
+                of: find.byTooltip('Delete link for second'),
+                matching: find.byType(IconButton)))
+            .onPressed,
+        isNull);
+
+    held.complete();
+    await settle(tester);
+    expect(server.links, isEmpty);
+    expect(server.requests('DELETE'), hasLength(2));
+    expect(find.text('Create link'), findsOneWidget);
   });
 
   testWidgets('closing the dialog while a link is deleted is harmless',
