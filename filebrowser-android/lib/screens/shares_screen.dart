@@ -68,11 +68,7 @@ class SharesScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Share links')),
       body: RefreshIndicator(
-        onRefresh: () {
-          // The owner names can be as stale as the links.
-          ref.invalidate(shareOwnersProvider);
-          return ref.refresh(sharesProvider.future);
-        },
+        onRefresh: () => _reload(ref),
         child: shares.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => _message(ApiException.from(e).message),
@@ -82,6 +78,19 @@ class SharesScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  /// Fetches the links and the owner names again, which can be as stale.
+  /// It completes once the list is up to date. A failure is not passed on:
+  /// the list shows it in place of the links.
+  Future<void> _reload(WidgetRef ref) async {
+    ref.invalidate(shareOwnersProvider);
+    ref.invalidate(sharesProvider);
+    try {
+      await ref.read(sharesProvider.future);
+    } catch (_) {
+      // Shown by [build] through the provider's error state.
+    }
   }
 
   /// A scrollable placeholder, so pull-to-refresh still works.
@@ -96,17 +105,21 @@ class SharesScreen extends ConsumerWidget {
     return ListView(children: [
       for (final link in links)
         ShareLinkTile(
+          // By link, not by position: the tile keeps state while it deletes.
+          key: ValueKey(link.hash),
           api: api,
           link: link,
           title: link.path,
           label: link.path,
           owner: owners[link.userId],
           onDelete: () async {
-            // Also after a failed delete, see [ShareDeletion.failed].
             final result = await deleteShareLink(context, api, link);
-            if (result != ShareDeletion.cancelled) {
-              ref.invalidate(sharesProvider);
-            }
+            // The screen may have been left while the server answered.
+            if (result == ShareDeletion.cancelled || !context.mounted) return;
+            // Also after a failed delete, see [ShareDeletion.failed]. Waiting
+            // for the new list keeps the delete button off until the row is
+            // gone.
+            await _reload(ref);
           },
         ),
     ]);

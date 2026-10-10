@@ -65,7 +65,8 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
       if (!mounted) return;
       setState(() {
         _links = links;
-        _adding = links.isEmpty;
+        // A reload must not close a form the user opened meanwhile.
+        _adding = _adding || links.isEmpty;
         _loadFailed = false;
       });
     } on ApiException catch (e) {
@@ -177,8 +178,17 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
         width: double.maxFinite,
         child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (_loadFailed)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('The existing links could not be loaded, so '
+                    'there may be more than are listed here.'),
+              ),
             for (final link in _links!)
               ShareLinkTile(
+                // By link, not by position: the tile keeps state while it
+                // deletes, and the list changes under it.
+                key: ValueKey(link.hash),
                 api: _api,
                 link: link,
                 title: _api.shareUrl(link),
@@ -229,6 +239,12 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
     );
   }
 
+  /// Drops the complaint about the lifetime once the number or the unit is
+  /// changed: the limit it names depends on the unit.
+  void _clearExpiresError() {
+    if (_expiresError != null) setState(() => _expiresError = null);
+  }
+
   /// The lifetime of the new link: a number and its unit.
   Widget _buildDuration() {
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -236,6 +252,7 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
         child: TextField(
           controller: _expires,
           keyboardType: TextInputType.number,
+          onChanged: (_) => _clearExpiresError(),
           decoration: InputDecoration(
             labelText: 'Expires after',
             hintText: 'Never',
@@ -247,7 +264,10 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
       const SizedBox(width: 12),
       DropdownButton<String>(
         value: _unit,
-        onChanged: (v) => setState(() => _unit = v!),
+        onChanged: (v) {
+          setState(() => _unit = v!);
+          _clearExpiresError();
+        },
         items: [
           for (final unit in shareUnits)
             DropdownMenuItem(value: unit, child: Text(unit)),

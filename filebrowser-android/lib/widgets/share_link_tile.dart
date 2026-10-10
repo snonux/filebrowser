@@ -79,7 +79,7 @@ class _ShareLinkTileState extends State<ShareLinkTile> {
     try {
       await widget.onDelete();
     } finally {
-      // The tile is gone once its link is deleted.
+      // The tile is usually gone by now if the link was deleted.
       if (mounted) setState(() => _deleting = false);
     }
   }

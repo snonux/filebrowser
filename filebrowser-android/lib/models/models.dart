@@ -86,7 +86,7 @@ int maxShareExpiryFor(String unit) => switch (unit) {
 /// [unit]: empty or 0 means the link never expires. Returns null for anything
 /// that is not a whole number from 0 to [maxShareExpiryFor] that unit, so a
 /// typo is reported instead of silently creating a permanent link.
-int? parseShareExpiry(String input, [String unit = 'seconds']) {
+int? parseShareExpiry(String input, String unit) {
   final text = input.trim();
   if (text.isEmpty) return 0;
   // Only ASCII digits: int.tryParse would also take a sign or hex.
