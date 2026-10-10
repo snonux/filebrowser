@@ -319,11 +319,12 @@ class FileBrowserApi {
 
   /// The links that already exist for the file or folder at [path].
   ///
-  /// A folder other than the root, whose path has only one spelling, is
-  /// asked for twice, with and without the trailing slash of [_shareApi]: links made by version 0.1.0 of the app, or by any other
-  /// client that leaves the slash out, are stored under the other spelling
-  /// and would otherwise be missing here. An administrator gets the same
-  /// links from both requests, so they are merged by hash.
+  /// A folder is asked for twice, with and without the trailing slash of
+  /// [_shareApi]; the root only once, as its path has a single spelling.
+  /// Links made by version 0.1.0 of the app, or by any other client that
+  /// leaves the slash out, are stored under the other spelling and would
+  /// otherwise be missing here. An administrator gets the same links from
+  /// both requests, so they are merged by hash.
   Future<List<ShareLink>> sharesFor(String path, {bool isDir = false}) =>
       _call(() async {
         final urls = {_shareApi(path, isDir: isDir), _api('share', path)};

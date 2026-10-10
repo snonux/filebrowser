@@ -38,9 +38,10 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
   /// what this dialog created itself. A later fetch that works clears it.
   bool _loadFailed = false;
 
-  /// Counts the fetches of the links and the local changes to them. An
-  /// answer is dropped when the count moved on while it was under way: it
+  /// Counts the links created and deleted in this dialog. A list that was
+  /// asked for before such a change and answers after it is not shown: it
   /// would bring back a link deleted meanwhile, or lose one just created.
+  /// The list is asked for again instead.
   int _listVersion = 0;
   String? _error;
   String? _expiresError;
@@ -64,11 +65,16 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
   /// and says so; a failed later one keeps the list that is shown.
   Future<void> _load() async {
     final item = widget.item;
-    final version = ++_listVersion;
+    final version = _listVersion;
     try {
       final links =
           sortShareLinks(await _api.sharesFor(item.path, isDir: item.isDir));
-      if (!mounted || version != _listVersion) return;
+      if (!mounted) return;
+      // Outdated by a change made while it was under way, see [_listVersion].
+      if (version != _listVersion) {
+        await _load();
+        return;
+      }
       setState(() {
         _links = links;
         // A reload must not close a form the user opened meanwhile.
@@ -76,7 +82,7 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
         _loadFailed = false;
       });
     } on ApiException catch (e) {
-      if (!mounted || version != _listVersion || _links != null) return;
+      if (!mounted || _links != null) return;
       // The list is unknown, but a new link can still be tried.
       setState(() {
         _links = [];
