@@ -162,3 +162,111 @@ func signShareTestToken(t *testing.T, id uint, username string, perm users.Permi
 	}
 	return signed
 }
+
+// The lifetime of a share must not be negative or so long that the duration
+// wraps around: both would yield an expiry in the past, so the share would be
+// reported as created and be dead on first use.
+func TestShareExpiry(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+
+	valid := []struct {
+		expires, unit string
+		want          int64
+	}{
+		{"", "hours", 0},
+		{"", "", 0},
+		{"0", "seconds", now.Unix()},
+		{"30", "seconds", now.Unix() + 30},
+		{"2", "minutes", now.Unix() + 120},
+		{"3", "hours", now.Unix() + 3*3600},
+		{"3", "", now.Unix() + 3*3600},
+		{"3", "weeks", now.Unix() + 3*3600},
+		{"1", "days", now.Unix() + 86400},
+		// The longest lifetime of each unit that still fits a time.Duration.
+		{"2147483647", "seconds", now.Unix() + 2147483647},
+		{"153722867", "minutes", now.Unix() + 153722867*60},
+		{"2562047", "hours", now.Unix() + 2562047*3600},
+		{"106751", "days", now.Unix() + 106751*86400},
+	}
+	for _, tc := range valid {
+		got, err := shareExpiry(share.CreateBody{Expires: tc.expires, Unit: tc.unit}, now)
+		if err != nil {
+			t.Errorf("expires=%q unit=%q: unexpected error: %v", tc.expires, tc.unit, err)
+		} else if got != tc.want {
+			t.Errorf("expires=%q unit=%q: got %d, want %d", tc.expires, tc.unit, got, tc.want)
+		}
+	}
+
+	invalid := []struct{ expires, unit string }{
+		{"-1", "hours"},
+		{"-1", "seconds"},
+		{"soon", "hours"},
+		{"1.5", "hours"},
+		{" 3", "hours"},
+		// One more than the longest lifetime of each unit.
+		{"9223372037", "seconds"},
+		{"153722868", "minutes"},
+		{"2562048", "hours"},
+		{"106752", "days"},
+		{"200000", "days"},
+		{"99999999999999999999999", "seconds"},
+	}
+	for _, tc := range invalid {
+		if got, err := shareExpiry(share.CreateBody{Expires: tc.expires, Unit: tc.unit}, now); err == nil {
+			t.Errorf("expires=%q unit=%q: expected an error, got expiry %d", tc.expires, tc.unit, got)
+		}
+	}
+}
+
+// A lifetime that is out of range is refused with 400 and stores nothing; a
+// valid one still creates a share that expires in the future.
+func TestSharePostHandlerValidatesLifetime(t *testing.T) {
+	root := t.TempDir()
+	userScope := filepath.Join(root, "user")
+	if err := os.MkdirAll(userScope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userScope, "file.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	key := []byte("test-signing-key")
+	perm := users.Permissions{Share: true, Download: true}
+	st := scopedUserStorage(t, userScope, perm, key)
+	signed := signToken(t, perm, key)
+
+	post := func(body string) *httptest.ResponseRecorder {
+		req, _ := http.NewRequest(http.MethodPost, "/file.txt", strings.NewReader(body))
+		req.Header.Set("X-Auth", signed)
+		rec := httptest.NewRecorder()
+		handle(sharePostHandler, "", st, &settings.Server{Root: root}).ServeHTTP(rec, req)
+		return rec
+	}
+
+	for _, body := range []string{
+		`{"expires":"-1","unit":"hours"}`,
+		`{"expires":"200000","unit":"days"}`,
+		`{"expires":"soon","unit":"hours"}`,
+	} {
+		if rec := post(body); rec.Code != http.StatusBadRequest {
+			t.Errorf("body %s: expected 400, got %d body=%q", body, rec.Code, rec.Body.String())
+		}
+	}
+	if links, err := st.Share.All(); err == nil && len(links) != 0 {
+		t.Fatalf("a refused lifetime must not store a share, found %d", len(links))
+	}
+
+	rec := post(`{"expires":"2","unit":"days"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Expire int64 `json:"expire"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if min := time.Now().Add(47 * time.Hour).Unix(); resp.Expire < min {
+		t.Errorf("expected an expiry about two days ahead, got %d (now %d)", resp.Expire, time.Now().Unix())
+	}
+}
