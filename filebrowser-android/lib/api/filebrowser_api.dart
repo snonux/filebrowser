@@ -311,38 +311,76 @@ class FileBrowserApi {
   // Shares
   // ---------------------------------------------------------------------------
 
+  /// Every link of the account; for an administrator, everyone's links.
   Future<List<ShareLink>> shares() => _call(() async {
         final res = await _dio.get<List<dynamic>>('$baseUrl/api/shares');
-        return (res.data ?? const [])
-            .cast<Map<String, dynamic>>()
-            .map(ShareLink.fromJson)
-            .toList();
+        return _shareLinks(res.data);
       });
 
-  /// Creates a share link. [expires] of 0 means it never expires; [unit] is
-  /// `seconds`, `minutes`, `hours` or `days`.
-  Future<ShareLink> createShare(String path,
-          {int expires = 0, String unit = 'hours', String password = ''}) =>
-      _call(() async {
-        final res = await _dio.post<Map<String, dynamic>>(
-          _api('share', path),
-          data: jsonEncode({
-            'password': password,
-            'expires': expires == 0 ? '' : '$expires',
-            'unit': unit,
-          }),
-          options: Options(contentType: 'application/json'),
-        );
-        return ShareLink.fromJson(res.data!);
+  /// The links that already exist for the file or folder at [path].
+  Future<List<ShareLink>> sharesFor(String path) => _call(() async {
+        final res = await _dio.get<List<dynamic>>(_api('share', path));
+        return _shareLinks(res.data);
       });
+
+  List<ShareLink> _shareLinks(List<dynamic>? json) => (json ?? const [])
+      .cast<Map<String, dynamic>>()
+      .map(ShareLink.fromJson)
+      .toList();
+
+  /// Creates a share link. [expires] of 0 means it never expires; [unit] is
+  /// one of [shareUnits]. An empty [password] leaves the link unprotected.
+  ///
+  /// The server falls back to hours for a unit it does not know and accepts
+  /// negative lifetimes, so both are refused here rather than sent.
+  Future<ShareLink> createShare(String path,
+      {int expires = 0, String unit = 'hours', String password = ''}) {
+    if (expires < 0 || expires > maxShareExpiry) {
+      throw ArgumentError.value(expires, 'expires');
+    }
+    if (!shareUnits.contains(unit)) throw ArgumentError.value(unit, 'unit');
+    return _call(() async {
+      final res = await _dio.post<Map<String, dynamic>>(
+        _api('share', path),
+        // The server expects the number as a string; empty means "never".
+        data: jsonEncode({
+          'password': password,
+          'expires': expires == 0 ? '' : '$expires',
+          'unit': unit,
+        }),
+        options: Options(contentType: 'application/json'),
+      );
+      return ShareLink.fromJson(res.data!);
+    });
+  }
 
   Future<void> deleteShare(String hash) => _call(() async {
         await _dio
             .delete<void>('$baseUrl/api/share/${Uri.encodeComponent(hash)}');
       });
 
-  /// The public address of a share, as the web UI builds it.
-  String shareUrl(ShareLink share) => '$baseUrl/share/${share.hash}';
+  /// The public address of a share, as the web UI builds it. It starts with
+  /// the server address the user signed in to, including any base path.
+  String shareUrl(ShareLink share) =>
+      '$baseUrl/share/${Uri.encodeComponent(share.hash)}';
+
+  /// The address that serves a shared file directly instead of showing the
+  /// share page (for a folder: its archive). The web UI offers it only for
+  /// links without a password, because it cannot carry one.
+  String shareDownloadUrl(ShareLink share) =>
+      '$baseUrl/api/public/dl/${Uri.encodeComponent(share.hash)}?inline=true';
+
+  /// User names by account id. Only administrators may list users; it labels
+  /// the owner of each link in their list of everyone's shares.
+  Future<Map<int, String>> usernames() => _call(() async {
+        final res = await _dio.get<List<dynamic>>('$baseUrl/api/users');
+        return {
+          for (final user
+              in (res.data ?? const []).cast<Map<String, dynamic>>())
+            (user['id'] as num?)?.toInt() ?? 0:
+                user['username'] as String? ?? '',
+        };
+      });
 
   // ---------------------------------------------------------------------------
   // Resumable uploads (tus)

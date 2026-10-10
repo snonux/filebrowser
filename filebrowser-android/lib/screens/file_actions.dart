@@ -315,6 +315,7 @@ class FileActions {
     return file;
   }
 
+  /// Shows the item's public links and lets the user add or delete one.
   Future<void> share(BuildContext context, FileItem item) => showDialog<void>(
       context: context, builder: (_) => ShareDialog(item: item));
 
@@ -362,7 +363,7 @@ class FileActions {
               if (perm.rename)
                 tile(Icons.drive_file_move_outline, 'Move to…',
                     () => transferTo(context, [item], copy: false)),
-              if (perm.share)
+              if (perm.canShare)
                 tile(Icons.share, 'Share link', () => share(context, item)),
               tile(Icons.info_outline, 'Info', () => info(context, item)),
               if (perm.delete)
