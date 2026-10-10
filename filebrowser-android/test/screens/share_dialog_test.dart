@@ -47,6 +47,10 @@ class _ShareServer {
 
   /// When set, deleting a link fails with this status.
   int? deleteStatus;
+
+  /// When set, the next request for the list is answered with this instead
+  /// of [links]: a snapshot taken before a later change.
+  List<Map<String, dynamic>>? staleList;
   int _next = 1;
 
   late final adapter = FakeAdapter(_handle);
@@ -57,6 +61,9 @@ class _ShareServer {
   ResponseBody _handle(RequestOptions o) {
     final path = o.uri.path;
     if (o.method == 'GET') {
+      final stale = staleList;
+      staleList = null;
+      if (stale != null) return reply(200, body: stale);
       return listStatus == null ? reply(200, body: links) : reply(listStatus!);
     }
     if (o.method == 'DELETE') {
@@ -430,6 +437,116 @@ void main() {
     await settle(tester);
     expect(find.text('Create link'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Expires after'), findsOneWidget);
+  });
+
+  testWidgets('a late list does not undo a link created meanwhile',
+      (tester) async {
+    final server = _ShareServer([_link('gone'), _link('open')]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    // The failed delete fetches the list again; the answer is late and was
+    // taken before the link below was created.
+    server.deleteStatus = 404;
+    server.staleList = [_link('open')];
+    final reload = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'GET' ? reload.future : null;
+    await tap(tester, find.byTooltip('Delete link for gone'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await tap(tester, find.text('New link'));
+    await tap(tester, find.text('Create link'));
+    expect(find.text('http://fb.local/base/share/new1'), findsOneWidget);
+
+    reload.complete();
+    await settle(tester);
+    expect(find.text('http://fb.local/base/share/new1'), findsOneWidget);
+    expect(find.text('http://fb.local/base/share/open'), findsOneWidget);
+  });
+
+  testWidgets('a late list does not bring back a link deleted meanwhile',
+      (tester) async {
+    final server = _ShareServer()..listStatus = 500;
+    await pumpApp(tester, server);
+    await openShare(tester);
+    // Creating after a failed first load fetches the list; that answer is
+    // late and still has the link that is deleted below.
+    server.listStatus = null;
+    server.staleList = [_link('new1')];
+    final reload = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'GET' ? reload.future : null;
+    await tap(tester, find.text('Create link'));
+    await tap(tester, find.byTooltip('Delete link for new1'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    expect(server.links, isEmpty);
+    expect(find.text('Create link'), findsOneWidget);
+
+    reload.complete();
+    await settle(tester);
+    await tap(tester, find.text('Cancel'));
+    // Nothing is listed, so cancelling the form closed the dialog.
+    expect(find.text('http://fb.local/base/share/new1'), findsNothing);
+    expect(find.text('menu'), findsOneWidget);
+    expect(find.text('New link'), findsNothing);
+  });
+
+  testWidgets('a failed delete whose reload fails too keeps the list',
+      (tester) async {
+    final server = _ShareServer([_link('open')]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    server
+      ..deleteStatus = 500
+      ..listStatus = 500;
+    await tap(tester, find.byTooltip('Delete link for open'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    expect(server.requests('GET'), hasLength(2));
+    // Still the list, with the link and a delete button that works again.
+    expect(find.text('http://fb.local/base/share/open'), findsOneWidget);
+    expect(find.text('New link'), findsOneWidget);
+    expect(find.text('Create link'), findsNothing);
+    expect(
+        tester
+            .widget<IconButton>(find.ancestor(
+                of: find.byTooltip('Delete link for open'),
+                matching: find.byType(IconButton)))
+            .onPressed,
+        isNotNull);
+  });
+
+  testWidgets('closing the dialog while a link is deleted is harmless',
+      (tester) async {
+    final server = _ShareServer([_link('a'), _link('b')]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    final deleted = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'DELETE' ? deleted.future : null;
+    await tap(tester, find.byTooltip('Delete link for a'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await tap(tester, find.text('Close'));
+    expect(find.text('New link'), findsNothing);
+
+    deleted.complete();
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+    expect(server.links.map((l) => l['hash']), ['b']);
+  });
+
+  testWidgets('closing the dialog before the links arrive is harmless',
+      (tester) async {
+    final server = _ShareServer([_link('a')]);
+    await pumpApp(tester, server);
+    final listed = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'GET' ? listed.future : null;
+    await openShare(tester);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    // Tapping beside the dialog dismisses it.
+    await tester.tapAt(const Offset(10, 10));
+    await settle(tester);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    listed.complete();
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+    expect(find.text('http://fb.local/base/share/a'), findsNothing);
   });
 
   testWidgets('closing the dialog while a link is created is harmless',

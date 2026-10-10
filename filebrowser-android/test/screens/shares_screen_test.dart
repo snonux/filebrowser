@@ -233,6 +233,34 @@ void main() {
         isNotNull);
   });
 
+  testWidgets('a running delete stays with its link when the list changes',
+      (tester) async {
+    final server = _Server();
+    await pumpScreen(tester, server, _user);
+    IconButton deleteButton(String path) =>
+        tester.widget<IconButton>(find.ancestor(
+            of: find.byTooltip('Delete link for $path'),
+            matching: find.byType(IconButton)));
+    // The delete of the second link is under way while the first one is
+    // deleted and its row removed, which moves the second row up.
+    final second = Completer<void>();
+    server.adapter.hold = (o) =>
+        o.method == 'DELETE' && o.uri.path.endsWith('/h2')
+            ? second.future
+            : null;
+    await tap(tester, find.byTooltip('Delete link for /theirs.txt'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await tap(tester, find.byTooltip('Delete link for /mine.txt'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    expect(find.text('/mine.txt'), findsNothing);
+    expect(deleteButton('/theirs.txt').onPressed, isNull);
+
+    second.complete();
+    await settle(tester);
+    expect(find.text('No share links'), findsOneWidget);
+    expect(server.count('DELETE', '/base/api/share/h2'), 1);
+  });
+
   testWidgets('leaving the screen while a link is deleted is harmless',
       (tester) async {
     final server = _Server();
