@@ -138,7 +138,11 @@ run=(flutter test integration_test/app_test.dart -d "$DEVICE"
   --dart-define=FB_E2E_SHOTS="${FB_E2E_SHOTS:-}")
 echo "== ${run[*]}"
 if [ "$DEVICE" = linux ] && [ -z "${DISPLAY:-}" ]; then
-  xvfb-run -a -s "-screen 0 1080x1920x24" "${run[@]}"
+  # GTK prefers Wayland and finds a desktop session by its default socket
+  # even without WAYLAND_DISPLAY, so on a workstation the app would open
+  # there instead of in Xvfb: clipboard and typing steps then depend on
+  # which window has the focus and fail at random. Pin it to X11.
+  GDK_BACKEND=x11 xvfb-run -a -s "-screen 0 1080x1920x24" "${run[@]}"
 else
   "${run[@]}"
 fi

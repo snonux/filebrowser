@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -234,6 +235,42 @@ var shareDeleteHandler = withPermShare(func(_ http.ResponseWriter, r *http.Reque
 	return errToStatus(err), err
 })
 
+// shareExpiry returns the Unix time at which a share created at now with the
+// lifetime asked for in body expires, or 0 for one that never does.
+//
+// The lifetime must be a whole number that is not negative and fits a
+// time.Duration in its unit. A negative one, or one so long that the
+// nanosecond count wraps around, would otherwise yield a time in the past:
+// the share would be reported as created and be dead on first use.
+func shareExpiry(body share.CreateBody, now time.Time) (int64, error) {
+	if body.Expires == "" {
+		return 0, nil
+	}
+
+	num, err := strconv.ParseInt(body.Expires, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid share lifetime %q", body.Expires)
+	}
+
+	var unit time.Duration
+	switch body.Unit {
+	case "seconds":
+		unit = time.Second
+	case "minutes":
+		unit = time.Minute
+	case "days":
+		unit = time.Hour * 24
+	default:
+		unit = time.Hour
+	}
+
+	if num < 0 || num > math.MaxInt64/int64(unit) {
+		return 0, fmt.Errorf("share lifetime %q is out of range", body.Expires)
+	}
+
+	return now.Add(unit * time.Duration(num)).Unix(), nil
+}
+
 var sharePostHandler = withPermShare(func(w http.ResponseWriter, r *http.Request, d *data) (int, error) {
 	// Only allow sharing paths that currently exist. Otherwise a share could be
 	// created for a non-existent path and would silently start exposing
@@ -263,27 +300,9 @@ var sharePostHandler = withPermShare(func(w http.ResponseWriter, r *http.Request
 
 	str := base64.URLEncoding.EncodeToString(bytes)
 
-	var expire int64 = 0
-
-	if body.Expires != "" {
-		num, err := strconv.Atoi(body.Expires)
-		if err != nil {
-			return http.StatusInternalServerError, err
-		}
-
-		var add time.Duration
-		switch body.Unit {
-		case "seconds":
-			add = time.Second * time.Duration(num)
-		case "minutes":
-			add = time.Minute * time.Duration(num)
-		case "days":
-			add = time.Hour * 24 * time.Duration(num)
-		default:
-			add = time.Hour * time.Duration(num)
-		}
-
-		expire = time.Now().Add(add).Unix()
+	expire, err := shareExpiry(body, time.Now())
+	if err != nil {
+		return http.StatusBadRequest, err
 	}
 
 	hash, status, err := getSharePasswordHash(body)

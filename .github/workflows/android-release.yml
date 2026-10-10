@@ -56,11 +56,10 @@ jobs:
       # which is not there yet. A pushed tag skips it. A tag created with the
       # workflow's own token does not start the tag-push trigger, so there is
       # one build. See docs/releasing-apps.md in snonux/fdroid, "Auto release
-      # tagging"; the step name is grepped for there, so keep it. Besides the
-      # android-v prefix, the empty-version guard is the one deliberate
-      # difference from that template: the step's shell has no pipefail, so a
-      # failed fetch would otherwise leave version empty and tag=android-v
-      # would create a junk tag.
+      # tagging"; the step name is grepped for there, so keep it. The step
+      # is that template's, with the android-v prefix. Its shell has no
+      # pipefail, so a failed fetch leaves version empty; without the check
+      # for that, tag=android-v would create a junk tag.
       - name: Create the tag if it does not exist yet
         if: github.event_name == 'workflow_dispatch'
         working-directory: .
