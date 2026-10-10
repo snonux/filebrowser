@@ -51,9 +51,15 @@ and are for development only.
    earlier release; with `--split-per-abi` Flutter derives the per-ABI version
    codes from it.
 2. Rewrite `fastlane/metadata/android/en-US/changelogs/default.txt`.
-3. Commit, then tag and push:
+3. Commit and push to `master`, then either push the tag:
    ```fish
-   git tag android-vX.Y.Z; and git push; and git push origin android-vX.Y.Z
+   git tag android-vX.Y.Z; and git push origin android-vX.Y.Z
+   ```
+   or start the release workflow, which creates the tag at the head of
+   `master` when it does not exist yet (this is how agents release, see
+   `docs/releasing-apps.md` in snonux/fdroid):
+   ```fish
+   gh workflow run android-release.yml -R snonux/filebrowser --ref master -f tag=android-vX.Y.Z
    ```
 4. The release workflow builds `armeabi-v7a`, `arm64-v8a` and `x86_64` APKs,
    checks they are not debug-signed and attaches them to the release.
