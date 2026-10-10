@@ -56,7 +56,11 @@ jobs:
       # which is not there yet. A pushed tag skips it. A tag created with the
       # workflow's own token does not start the tag-push trigger, so there is
       # one build. See docs/releasing-apps.md in snonux/fdroid, "Auto release
-      # tagging"; the step name is grepped for there, so keep it.
+      # tagging"; the step name is grepped for there, so keep it. Besides the
+      # android-v prefix, the empty-version guard is the one deliberate
+      # difference from that template: the step's shell has no pipefail, so a
+      # failed fetch would otherwise leave version empty and tag=android-v
+      # would create a junk tag.
       - name: Create the tag if it does not exist yet
         if: github.event_name == 'workflow_dispatch'
         working-directory: .
@@ -69,6 +73,7 @@ jobs:
           pubspec="${APP_DIR#./}/pubspec.yaml"; pubspec="${pubspec#./}"
           version=$(gh api "repos/$GITHUB_REPOSITORY/contents/$pubspec?ref=$GITHUB_SHA" \
             -H 'Accept: application/vnd.github.raw' | sed -n 's/^version: *\([^+]*\).*/\1/p')
+          [ -n "$version" ] || { echo "::error::Could not read the version from $pubspec at $GITHUB_SHA"; exit 1; }
           if [ "android-v$version" != "$TAG" ]; then
             echo "::error::Tag $TAG does not match version $version in $pubspec"; exit 1
           fi
