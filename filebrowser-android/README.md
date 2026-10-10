@@ -74,8 +74,9 @@ usage, new folder and file, text editing, single and multi-chunk uploads,
 replace on conflict, rename (with `+`, `%` and `#` in the name), copy, move,
 multi-select delete, checksum, thumbnails and the image viewer, file and zip
 downloads, opening a file in another app, search, share links (including the
-public link, the download link and the per-item list), theme, session restore after a restart, signing in again after
-the session is rejected, logout, the read-only account, and the proxy.
+public link, the download link and the per-item list), theme, session restore
+after a restart, signing in again after the session is rejected, logout, the
+read-only account, and the proxy.
 
 By default it runs the app as a Linux desktop build under Xvfb; the Dart code
 and every HTTP call are the same as on Android. That needs `clang`, `cmake`,

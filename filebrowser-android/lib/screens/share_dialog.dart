@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/filebrowser_api.dart';
@@ -34,6 +33,10 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
   /// Whether the form for a new link is shown instead of the list.
   bool _adding = false;
   bool _busy = false;
+
+  /// Whether the first request for the links failed, so [_links] is only
+  /// what this dialog created itself.
+  bool _loadFailed = false;
   String? _error;
   String? _expiresError;
 
@@ -52,46 +55,58 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
     super.dispose();
   }
 
+  /// Fetches the item's links. A failure of the first request opens the form
+  /// and says so; a failed later one keeps the list that is shown.
   Future<void> _load() async {
+    final item = widget.item;
     try {
-      final links = sortShareLinks(await _api.sharesFor(widget.item.path));
+      final links =
+          sortShareLinks(await _api.sharesFor(item.path, isDir: item.isDir));
       if (!mounted) return;
       setState(() {
         _links = links;
         _adding = links.isEmpty;
+        _loadFailed = false;
       });
     } on ApiException catch (e) {
-      if (!mounted) return;
-      // The list is unknown, but a new link can still be tried; the form
-      // shows why the list is missing.
+      if (!mounted || _links != null) return;
+      // The list is unknown, but a new link can still be tried.
       setState(() {
         _links = [];
         _adding = true;
-        _error = e.message;
+        _loadFailed = true;
+        _error = 'Could not load the existing links: ${e.message}';
       });
     }
   }
 
   Future<void> _create() async {
-    final expires = parseShareExpiry(_expires.text);
+    final expires = parseShareExpiry(_expires.text, _unit);
     setState(() {
       _error = null;
       _expiresError = expires == null
-          ? 'Enter a whole number from 0 to $maxShareExpiry'
+          ? 'Enter a whole number from 0 to ${maxShareExpiryFor(_unit)}'
           : null;
     });
     if (expires == null) return;
     setState(() => _busy = true);
     // Read before the first await: the dialog may be closed meanwhile.
     final api = _api;
+    final item = widget.item;
     try {
       // Trimmed like the web UI's field, so a stray space does not become a
       // password nobody knows about.
-      final share = await api.createShare(widget.item.path,
-          expires: expires, unit: _unit, password: _password.text.trim());
-      await Clipboard.setData(ClipboardData(text: api.shareUrl(share)));
-      showMessage('Link created and copied');
+      final share = await api.createShare(item.path,
+          isDir: item.isDir,
+          expires: expires,
+          unit: _unit,
+          password: _password.text.trim());
+      // Show the link before copying it: the link exists even if the copy
+      // fails, and a form left open would invite a duplicate.
       if (mounted) _showCreated(share);
+      showMessage(await copyText(api.shareUrl(share))
+          ? 'Link created and copied'
+          : 'Link created, but it could not be copied');
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {
@@ -108,14 +123,24 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
       _unit = 'hours';
       _adding = false;
     });
+    // The item may have more links than the one just made.
+    if (_loadFailed) _load();
   }
 
   Future<void> _delete(ShareLink link) async {
-    if (!await deleteShareLink(context, _api, link) || !mounted) return;
-    setState(() {
-      _links = _links!.where((l) => l.hash != link.hash).toList();
-      _adding = _links!.isEmpty;
-    });
+    final result = await deleteShareLink(context, _api, link);
+    if (!mounted) return;
+    switch (result) {
+      case ShareDeletion.cancelled:
+        break;
+      case ShareDeletion.deleted:
+        setState(() {
+          _links = _links!.where((l) => l.hash != link.hash).toList();
+          _adding = _links!.isEmpty;
+        });
+      case ShareDeletion.failed:
+        await _load();
+    }
   }
 
   /// Leaves the form: back to the list, or out of the dialog when there is

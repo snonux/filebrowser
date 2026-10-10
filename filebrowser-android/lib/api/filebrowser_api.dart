@@ -318,10 +318,21 @@ class FileBrowserApi {
       });
 
   /// The links that already exist for the file or folder at [path].
-  Future<List<ShareLink>> sharesFor(String path) => _call(() async {
-        final res = await _dio.get<List<dynamic>>(_api('share', path));
+  Future<List<ShareLink>> sharesFor(String path, {bool isDir = false}) =>
+      _call(() async {
+        final res =
+            await _dio.get<List<dynamic>>(_shareApi(path, isDir: isDir));
         return _shareLinks(res.data);
       });
+
+  /// The share endpoint of [path]. A folder is addressed with a trailing
+  /// slash, as the web UI does: the server stores the path as it was sent and
+  /// looks an account's links up by that exact string, so without the slash
+  /// the app and the web UI would not see each other's folder links.
+  String _shareApi(String path, {required bool isDir}) {
+    final url = _api('share', path);
+    return isDir && !url.endsWith('/') ? '$url/' : url;
+  }
 
   List<ShareLink> _shareLinks(List<dynamic>? json) => (json ?? const [])
       .cast<Map<String, dynamic>>()
@@ -331,17 +342,21 @@ class FileBrowserApi {
   /// Creates a share link. [expires] of 0 means it never expires; [unit] is
   /// one of [shareUnits]. An empty [password] leaves the link unprotected.
   ///
-  /// The server falls back to hours for a unit it does not know and accepts
-  /// negative lifetimes, so both are refused here rather than sent.
+  /// The server falls back to hours for a unit it does not know, accepts
+  /// negative lifetimes and overflows on very long ones, so all three fail
+  /// here with an [ArgumentError] instead of being sent.
   Future<ShareLink> createShare(String path,
-      {int expires = 0, String unit = 'hours', String password = ''}) {
-    if (expires < 0 || expires > maxShareExpiry) {
+      {bool isDir = false,
+      int expires = 0,
+      String unit = 'hours',
+      String password = ''}) async {
+    if (!shareUnits.contains(unit)) throw ArgumentError.value(unit, 'unit');
+    if (expires < 0 || expires > maxShareExpiryFor(unit)) {
       throw ArgumentError.value(expires, 'expires');
     }
-    if (!shareUnits.contains(unit)) throw ArgumentError.value(unit, 'unit');
     return _call(() async {
       final res = await _dio.post<Map<String, dynamic>>(
-        _api('share', path),
+        _shareApi(path, isDir: isDir),
         // The server expects the number as a string; empty means "never".
         data: jsonEncode({
           'password': password,
@@ -371,15 +386,19 @@ class FileBrowserApi {
       '$baseUrl/api/public/dl/${Uri.encodeComponent(share.hash)}?inline=true';
 
   /// User names by account id. Only administrators may list users; it labels
-  /// the owner of each link in their list of everyone's shares.
+  /// the owner of each link in their list of everyone's shares. Entries
+  /// without an id or a name are left out: a link without a known owner has
+  /// the id 0 and must not pick up a name from a malformed entry.
   Future<Map<int, String>> usernames() => _call(() async {
         final res = await _dio.get<List<dynamic>>('$baseUrl/api/users');
-        return {
-          for (final user
-              in (res.data ?? const []).cast<Map<String, dynamic>>())
-            (user['id'] as num?)?.toInt() ?? 0:
-                user['username'] as String? ?? '',
-        };
+        final names = <int, String>{};
+        for (final user
+            in (res.data ?? const []).cast<Map<String, dynamic>>()) {
+          final id = (user['id'] as num?)?.toInt() ?? 0;
+          final name = user['username'] as String? ?? '';
+          if (id > 0 && name.isNotEmpty) names[id] = name;
+        }
+        return names;
       });
 
   // ---------------------------------------------------------------------------

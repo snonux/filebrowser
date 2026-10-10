@@ -69,16 +69,30 @@ const shareUnits = ['seconds', 'minutes', 'hours', 'days'];
 /// The longest lifetime the web UI's number field allows.
 const maxShareExpiry = 2147483647;
 
-/// Parses the "Expires after" field of the share form: empty or 0 means the
-/// link never expires. Returns null for anything that is not a whole number
-/// from 0 to [maxShareExpiry], so a typo is reported instead of silently
-/// creating a permanent link.
-int? parseShareExpiry(String input) {
+/// The longest lifetime that may be asked for in [unit].
+///
+/// The server adds the lifetime as a 64-bit count of nanoseconds, which holds
+/// about 292 years. Anything longer wraps around to a date in the past, so
+/// the link would be dead on arrival; the web UI's own limit only prevents
+/// that for seconds.
+int maxShareExpiryFor(String unit) => switch (unit) {
+      'minutes' => 153722867,
+      'hours' => 2562047,
+      'days' => 106751,
+      _ => maxShareExpiry,
+    };
+
+/// Parses the "Expires after" field of the share form for a lifetime in
+/// [unit]: empty or 0 means the link never expires. Returns null for anything
+/// that is not a whole number from 0 to [maxShareExpiryFor] that unit, so a
+/// typo is reported instead of silently creating a permanent link.
+int? parseShareExpiry(String input, [String unit = 'seconds']) {
   final text = input.trim();
   if (text.isEmpty) return 0;
+  // Only ASCII digits: int.tryParse would also take a sign or hex.
   if (!RegExp(r'^[0-9]+$').hasMatch(text)) return null;
   final value = int.tryParse(text);
-  return value == null || value > maxShareExpiry ? null : value;
+  return value == null || value > maxShareExpiryFor(unit) ? null : value;
 }
 
 /// A share link as the server returns it.

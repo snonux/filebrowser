@@ -26,21 +26,35 @@ final shareOwnersProvider =
   }
 });
 
-/// Asks before deleting [link]; returns whether it is gone from the server.
-Future<bool> deleteShareLink(
+/// How [deleteShareLink] ended.
+enum ShareDeletion {
+  /// The user did not confirm; nothing was sent.
+  cancelled,
+
+  /// The link is gone from the server.
+  deleted,
+
+  /// The server refused or could not be reached. The usual cause is that the
+  /// link is already gone (it expired or was deleted elsewhere), so the
+  /// caller should fetch its list again.
+  failed,
+}
+
+/// Asks before deleting [link] and reports a failure to the user.
+Future<ShareDeletion> deleteShareLink(
     BuildContext context, FileBrowserApi api, ShareLink link) async {
   if (!await confirm(context,
       title: 'Delete this link?',
       message: 'People with the link lose access.',
       action: 'Delete')) {
-    return false;
+    return ShareDeletion.cancelled;
   }
   try {
     await api.deleteShare(link.hash);
-    return true;
+    return ShareDeletion.deleted;
   } on ApiException catch (e) {
     showMessage(e.message);
-    return false;
+    return ShareDeletion.failed;
   }
 }
 
@@ -54,7 +68,11 @@ class SharesScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Share links')),
       body: RefreshIndicator(
-        onRefresh: () => ref.refresh(sharesProvider.future),
+        onRefresh: () {
+          // The owner names can be as stale as the links.
+          ref.invalidate(shareOwnersProvider);
+          return ref.refresh(sharesProvider.future);
+        },
         child: shares.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => _message(ApiException.from(e).message),
@@ -84,10 +102,11 @@ class SharesScreen extends ConsumerWidget {
           label: link.path,
           owner: owners[link.userId],
           onDelete: () async {
-            // Refresh even after a failed delete: the usual cause is that the
-            // link is already gone.
-            await deleteShareLink(context, api, link);
-            ref.invalidate(sharesProvider);
+            // Also after a failed delete, see [ShareDeletion.failed].
+            final result = await deleteShareLink(context, api, link);
+            if (result != ShareDeletion.cancelled) {
+              ref.invalidate(sharesProvider);
+            }
           },
         ),
     ]);
