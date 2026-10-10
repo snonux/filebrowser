@@ -32,11 +32,13 @@ second one. Its certificate has the SHA-256 fingerprint
 2. The release workflow reads the same key from repository secrets:
    ```fish
    function get; sed -n "s/^$argv[1]=//p" filebrowser-android/android/key.properties; end
-   base64 -w0 (get storeFile) | gh secret set ANDROID_KEYSTORE
-   gh secret set ANDROID_KEY_ALIAS --body (get keyAlias)
-   gh secret set ANDROID_KEYSTORE_PASSWORD --body (get storePassword)
-   gh secret set ANDROID_KEY_PASSWORD --body (get keyPassword)
+   base64 -w0 (get storeFile) | gh secret set ANDROID_KEYSTORE -R snonux/filebrowser
+   gh secret set ANDROID_KEY_ALIAS -R snonux/filebrowser --body (get keyAlias)
+   gh secret set ANDROID_KEYSTORE_PASSWORD -R snonux/filebrowser --body (get storePassword)
+   gh secret set ANDROID_KEY_PASSWORD -R snonux/filebrowser --body (get keyPassword)
    ```
+   `-R` names the repository because in a fork checkout `gh` may otherwise
+   pick the upstream one.
    Optionally set `FDROID_DISPATCH_TOKEN` (a fine-grained token with
    *Contents: read and write* on snonux/fdroid) so a release reaches F-Droid
    at once instead of within six hours.
@@ -66,11 +68,20 @@ and are for development only.
    but cannot push tags.
 
    This needs that step to be present in
-   `.github/workflows/android-release.yml` on `master`; from the repository
-   root, check with
-   `grep -q 'Create the tag if it does not exist yet' .github/workflows/android-release.yml`.
-   Without the step a manual run only rebuilds an existing tag, so a release
-   then still needs a pushed `android-vX.Y.Z` tag.
+   `.github/workflows/android-release.yml` on `master` on GitHub; check the
+   remote branch, not the local checkout:
+   ```fish
+   git fetch origin; and git grep -c 'Create the tag if it does not exist yet' origin/master -- .github/workflows/android-release.yml
+   ```
+   This prints the file name with a count of 1
+   (`origin/master:.github/workflows/android-release.yml:1`) when the step is
+   present and prints nothing when it is missing. Without the step a manual
+   run only rebuilds an existing tag, so a release then still needs a pushed
+   `android-vX.Y.Z` tag. While the step is missing, the edited workflow is at
+   `filebrowser-android/docs/android-release.yml`; install it from the
+   repository root with
+   `git mv -f filebrowser-android/docs/android-release.yml .github/workflows/android-release.yml`
+   followed by a commit, and push that to `master`.
 5. The workflow then builds `armeabi-v7a`, `arm64-v8a` and `x86_64` APKs,
    checks they are not debug-signed and attaches them to the release.
 6. F-Droid picks the release up on its next six-hour run, or at once with
