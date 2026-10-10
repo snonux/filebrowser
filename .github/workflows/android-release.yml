@@ -1,6 +1,5 @@
 # Release workflow for the Android client in filebrowser-android/, from the
-# snonux/fdroid template (docs/templates/release.yml there). Move it to
-# .github/workflows/ to enable it; an agent's token cannot write there.
+# snonux/fdroid template (docs/templates/release.yml there).
 #
 # The server's releases use vX.Y.Z tags, so the app uses android-vX.Y.Z. A
 # pushed android-vX.Y.Z tag builds the per-ABI release APKs with the app's

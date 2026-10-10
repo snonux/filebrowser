@@ -1,17 +1,16 @@
-# Checks for the Android client in filebrowser-android/. Move it to
-# .github/workflows/ to enable it; an agent's token cannot write there.
+# Checks for the Android client in filebrowser-android/.
 #
-# Besides analysis and unit tests it builds a debug APK (the cloud sessions
-# that wrote the app have no Android SDK) and runs the end-to-end test against
-# a server built from this commit.
+# Besides analysis and unit tests it builds a debug APK, so a broken Gradle
+# setup shows up here and not in a release, and runs the end-to-end test
+# against a server built from this commit.
 name: Android CI
 
 on:
   push:
     branches: [master]
-    paths: ['filebrowser-android/**', 'http/**', 'ci/workflows/android-ci.yml']
+    paths: ['filebrowser-android/**', 'http/**', '.github/workflows/android-ci.yml']
   pull_request:
-    paths: ['filebrowser-android/**', 'http/**', 'ci/workflows/android-ci.yml']
+    paths: ['filebrowser-android/**', 'http/**', '.github/workflows/android-ci.yml']
 
 permissions:
   contents: read
