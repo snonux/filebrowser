@@ -51,11 +51,23 @@ and are for development only.
    earlier release; with `--split-per-abi` Flutter derives the per-ABI version
    codes from it.
 2. Rewrite `fastlane/metadata/android/en-US/changelogs/default.txt`.
-3. Commit, then tag and push:
+3. Commit and push to `master` (the default branch here is `master`, not
+   `main`). Do not create or push a tag.
+4. Start the release workflow on `master` with the new tag:
    ```fish
-   git tag android-vX.Y.Z; and git push; and git push origin android-vX.Y.Z
+   gh workflow run android-release.yml -R snonux/filebrowser --ref master -f tag=android-vX.Y.Z
    ```
-4. The release workflow builds `armeabi-v7a`, `arm64-v8a` and `x86_64` APKs,
+   Its first step, "Create the tag if it does not exist yet", reads
+   `filebrowser-android/pubspec.yaml` at the head of `master`, stops with an
+   error if `android-v<version>` there is not the tag given, and otherwise
+   creates the tag on that commit. So start the run only after the bump commit
+   is on `master`. Agent sessions release this way too: they can start
+   workflows but cannot push tags.
+5. The workflow then builds `armeabi-v7a`, `arm64-v8a` and `x86_64` APKs,
    checks they are not debug-signed and attaches them to the release.
-5. F-Droid picks the release up on its next six-hour run, or at once with
+6. F-Droid picks the release up on its next six-hour run, or at once with
    `gh workflow run publish.yml -R snonux/fdroid`.
+
+Running the workflow again with a tag that exists rebuilds that tag, e.g.
+after fixing a secret; it never moves a tag. A tag pushed by hand still starts
+the workflow as before, but is no longer needed.
