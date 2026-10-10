@@ -34,9 +34,14 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
   bool _adding = false;
   bool _busy = false;
 
-  /// Whether the first request for the links failed, so [_links] is only
-  /// what this dialog created itself.
+  /// Whether the links could not be fetched so far, so [_links] is only
+  /// what this dialog created itself. A later fetch that works clears it.
   bool _loadFailed = false;
+
+  /// Counts the fetches of the links and the local changes to them. An
+  /// answer is dropped when the count moved on while it was under way: it
+  /// would bring back a link deleted meanwhile, or lose one just created.
+  int _listVersion = 0;
   String? _error;
   String? _expiresError;
 
@@ -59,10 +64,11 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
   /// and says so; a failed later one keeps the list that is shown.
   Future<void> _load() async {
     final item = widget.item;
+    final version = ++_listVersion;
     try {
       final links =
           sortShareLinks(await _api.sharesFor(item.path, isDir: item.isDir));
-      if (!mounted) return;
+      if (!mounted || version != _listVersion) return;
       setState(() {
         _links = links;
         // A reload must not close a form the user opened meanwhile.
@@ -70,7 +76,7 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
         _loadFailed = false;
       });
     } on ApiException catch (e) {
-      if (!mounted || _links != null) return;
+      if (!mounted || version != _listVersion || _links != null) return;
       // The list is unknown, but a new link can still be tried.
       setState(() {
         _links = [];
@@ -120,6 +126,7 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
     _expires.clear();
     _password.clear();
     setState(() {
+      _listVersion++;
       _links = sortShareLinks([...?_links, share]);
       _unit = 'hours';
       _adding = false;
@@ -136,6 +143,7 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
         break;
       case ShareDeletion.deleted:
         setState(() {
+          _listVersion++;
           _links = _links!.where((l) => l.hash != link.hash).toList();
           _adding = _links!.isEmpty;
         });
