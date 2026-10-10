@@ -436,6 +436,30 @@ void main() {
     await back(tester);
     await waitFor(tester, find.text('readme.md'));
 
+    // -- PDF viewer and media player ------------------------------------------
+    await tapText(tester, 'media');
+    await tapText(tester, 'guide.pdf');
+    await waitFor(tester, find.text('1 / 2'));
+    await screenshot(tester, '8-pdf');
+    await back(tester);
+    await tapText(tester, 'tone.wav');
+    if (Platform.isLinux) {
+      // video_player has no Linux implementation, so the desktop build shows
+      // the fallback, which hands the file to another app.
+      await waitFor(tester, find.text('This file cannot be played here.'));
+      await tapText(tester, 'Open with another app');
+      await waitUntil(tester, () async => device.opened.length == 2,
+          'tone.wav opened');
+      expect(device.opened.last.path, endsWith('/downloads/tone.wav'));
+    } else {
+      await waitFor(tester, find.byTooltip('Pause'));
+      await tap(tester, find.byTooltip('Pause'));
+      await waitFor(tester, find.byTooltip('Play'));
+    }
+    await back(tester);
+    await back(tester);
+    await waitFor(tester, find.text('readme.md'));
+
     // -- Search ---------------------------------------------------------------
     await tap(tester, find.byTooltip('Search'));
     await tester.enterText(find.byType(TextField), 'data');

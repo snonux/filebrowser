@@ -7,6 +7,8 @@ import 'providers/session_provider.dart';
 import 'screens/browser_screen.dart';
 import 'screens/image_viewer_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/media_player_screen.dart';
+import 'screens/pdf_viewer_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/shares_screen.dart';
@@ -56,6 +58,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.viewer,
         builder: (context, state) => ImageViewerScreen(path: pathOf(state)),
+      ),
+      GoRoute(
+        path: AppRoutes.pdfViewer,
+        builder: (context, state) => PdfViewerScreen(path: pathOf(state)),
+      ),
+      GoRoute(
+        path: AppRoutes.player,
+        builder: (context, state) => MediaPlayerScreen(path: pathOf(state)),
       ),
       GoRoute(
         path: AppRoutes.searchPage,

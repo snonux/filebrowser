@@ -3,7 +3,9 @@ File Browser is the Android client for a self-hosted File Browser server. It tal
 * Browse folders with image thumbnails, sort by name, size or date, and show or hide dotfiles
 * Upload files from any app's storage through Android's file picker; large uploads use resumable tus uploads and continue after a dropped chunk
 * Download files, or whole folders as a zip, and open them in another app
-* View images full screen and swipe through a folder
+* View images full screen, pinch to zoom and swipe through a folder
+* Read PDFs in the app, with zoom and page count
+* Play videos and audio streamed from the server, with seeking
 * Edit text files
 * Create folders and files, rename, copy, move and delete, one item or many at once
 * Search below the current folder

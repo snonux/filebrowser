@@ -19,3 +19,11 @@ String formatDate(DateTime date) {
   return '${d.year}-${_two(d.month)}-${_two(d.day)} '
       '${_two(d.hour)}:${_two(d.minute)}';
 }
+
+/// A playback position, e.g. `3:07` or `1:02:03`.
+String formatDuration(Duration d) {
+  final h = d.inHours;
+  final m = d.inMinutes.remainder(60);
+  final s = d.inSeconds.remainder(60);
+  return h > 0 ? '$h:${_two(m)}:${_two(s)}' : '$m:${_two(s)}';
+}

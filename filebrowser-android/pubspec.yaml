@@ -1,7 +1,7 @@
 name: filebrowser_android
 description: File Browser Android client
 publish_to: "none"
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -28,6 +28,11 @@ dependencies:
   path_provider: ^2.1.5
   # open_filex: hands a downloaded file to the app Android picks for its type.
   open_filex: ^4.7.0
+  # pdfrx: PDF viewer on PDFium (BSD), bundled at build time; also runs in
+  # the Linux desktop build of the e2e test.
+  pdfrx: ^2.6.5
+  # video_player: plays video and audio with Android's ExoPlayer (Media3).
+  video_player: ^2.14.1
 
 dev_dependencies:
   flutter_test:
