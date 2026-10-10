@@ -22,6 +22,8 @@ flutter_secure_storage.
   release: bump `pubspec.yaml` and the fastlane changelog, commit, push to
   `master` (the default branch, not `main`), then start the release workflow
   with the tag, which creates it:
-  `gh workflow run android-release.yml --ref master -f tag=android-vX.Y.Z`.
-  Do not create or push the tag with git. See
-  [docs/fdroid-release.md](docs/fdroid-release.md).
+  `gh workflow run android-release.yml -R snonux/filebrowser --ref master -f tag=android-vX.Y.Z`.
+  Do not create or push the tag with git. This needs the workflow on `master`
+  to have the tag-creating step; see
+  [docs/fdroid-release.md](docs/fdroid-release.md) for the check and the
+  release steps.

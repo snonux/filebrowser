@@ -58,11 +58,19 @@ and are for development only.
    gh workflow run android-release.yml -R snonux/filebrowser --ref master -f tag=android-vX.Y.Z
    ```
    Its first step, "Create the tag if it does not exist yet", reads
-   `filebrowser-android/pubspec.yaml` at the head of `master`, stops with an
-   error if `android-v<version>` there is not the tag given, and otherwise
-   creates the tag on that commit. So start the run only after the bump commit
-   is on `master`. Agent sessions release this way too: they can start
-   workflows but cannot push tags.
+   `filebrowser-android/pubspec.yaml` at the head of the branch the run is
+   started on (`--ref`), stops with an error if `android-v<version>` there is
+   not the tag given, and otherwise creates the tag on that commit. Releases
+   are started on `master`, so start the run only after the bump commit is on
+   `master`. Agent sessions release this way too: they can start workflows
+   but cannot push tags.
+
+   This needs that step to be present in
+   `.github/workflows/android-release.yml` on `master`; from the repository
+   root, check with
+   `grep -q 'Create the tag if it does not exist yet' .github/workflows/android-release.yml`.
+   Without the step a manual run only rebuilds an existing tag, so a release
+   then still needs a pushed `android-vX.Y.Z` tag.
 5. The workflow then builds `armeabi-v7a`, `arm64-v8a` and `x86_64` APKs,
    checks they are not debug-signed and attaches them to the release.
 6. F-Droid picks the release up on its next six-hour run, or at once with
