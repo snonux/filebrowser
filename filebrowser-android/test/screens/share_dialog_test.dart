@@ -688,7 +688,15 @@ void main() {
                 find.widgetWithText(FilledButton, 'Create link'))
             .onPressed,
         isNull);
-    await tap(tester, find.text('Cancel'));
+    // Nor can the form be left: the answer belongs to it.
+    expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, 'Cancel'))
+            .onPressed,
+        isNull);
+    // Tapping beside the dialog still dismisses it.
+    await tester.tapAt(const Offset(10, 10));
+    await settle(tester);
     expect(find.text('Create link'), findsNothing);
 
     created.complete();
@@ -697,6 +705,54 @@ void main() {
     // The link exists, so it is still copied and announced.
     expect(clipboard, ['http://fb.local/base/share/new1']);
     expect(find.text('Link created and copied'), findsOneWidget);
+  });
+
+  testWidgets('a create that fails after the dialog was closed is reported',
+      (tester) async {
+    final server = _ShareServer([_link('open')])..createStatus = 500;
+    await pumpApp(tester, server);
+    await openShare(tester);
+    await tap(tester, find.text('New link'));
+    final answered = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'POST' ? answered.future : null;
+    await tap(tester, find.text('Create link'));
+    await tester.tapAt(const Offset(10, 10));
+    await settle(tester);
+    expect(find.text('Create link'), findsNothing);
+
+    answered.complete();
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+    // Said in a message, as there is no form left to show it on.
+    expect(find.widgetWithText(SnackBar, 'Server error (500)'), findsOneWidget);
+    expect(clipboard, isEmpty);
+    expect(server.links, hasLength(1));
+  });
+
+  testWidgets('a running delete keeps its button off across the form',
+      (tester) async {
+    final server = _ShareServer([_link('a'), _link('b')]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    final deleted = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'DELETE' ? deleted.future : null;
+    await tap(tester, find.byTooltip('Delete link for a'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    // Opening and leaving the form builds the list anew.
+    await tap(tester, find.text('New link'));
+    await tap(tester, find.text('Cancel'));
+    IconButton deleteButton(String hash) =>
+        tester.widget<IconButton>(find.ancestor(
+            of: find.byTooltip('Delete link for $hash'),
+            matching: find.byType(IconButton)));
+    expect(deleteButton('a').onPressed, isNull);
+    expect(deleteButton('b').onPressed, isNotNull);
+
+    deleted.complete();
+    await settle(tester);
+    expect(server.requests('DELETE'), hasLength(1));
+    expect(find.byTooltip('Delete link for a'), findsNothing);
+    expect(deleteButton('b').onPressed, isNotNull);
   });
 
   testWidgets('deleting one of several links leaves the others usable',

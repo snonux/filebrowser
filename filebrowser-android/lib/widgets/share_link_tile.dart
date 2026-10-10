@@ -38,6 +38,7 @@ class ShareLinkTile extends StatefulWidget {
     this.owner,
     this.downloadLink = false,
     this.actionsBelow = false,
+    this.deleting = false,
   });
 
   final FileBrowserApi api;
@@ -49,8 +50,13 @@ class ShareLinkTile extends StatefulWidget {
   final String label;
 
   /// Asks for confirmation and deletes the link. The delete button is off
-  /// until it completes.
+  /// until it completes, for as long as this tile lives; see [deleting].
   final Future<void> Function() onDelete;
+
+  /// Whether the owner of the list knows of a delete of this link that is
+  /// under way. It keeps the delete button off when the tile was built anew
+  /// in the meantime, which this tile cannot know by itself.
+  final bool deleting;
 
   /// The user name of the link's owner, when it is worth showing.
   final String? owner;
@@ -109,7 +115,7 @@ class _ShareLinkTileState extends State<ShareLinkTile> {
       IconButton(
         tooltip: 'Delete link for $label',
         icon: const Icon(Icons.delete_outline),
-        onPressed: _deleting ? null : _delete,
+        onPressed: _deleting || widget.deleting ? null : _delete,
       ),
     ];
   }

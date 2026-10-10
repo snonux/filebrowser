@@ -43,6 +43,11 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
   /// would bring back a link deleted meanwhile, or lose one just created.
   /// The list is asked for again instead.
   int _listVersion = 0;
+
+  /// The hashes of the links whose delete is under way. Kept here, not only
+  /// in the tiles: they are rebuilt when the form is opened and closed, and
+  /// their delete buttons must stay off meanwhile.
+  final _deleting = <String>{};
   String? _error;
   String? _expiresError;
 
@@ -121,7 +126,12 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
           ? 'Link created and copied'
           : 'Link created, but it could not be copied');
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted) {
+        setState(() => _error = e.message);
+      } else {
+        // The dialog was closed meanwhile; still say that no link was made.
+        showMessage(e.message);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -144,7 +154,13 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
   }
 
   Future<void> _delete(ShareLink link) async {
-    final result = await deleteShareLink(context, _api, link);
+    setState(() => _deleting.add(link.hash));
+    final ShareDeletion result;
+    try {
+      result = await deleteShareLink(context, _api, link);
+    } finally {
+      if (mounted) setState(() => _deleting.remove(link.hash));
+    }
     if (!mounted) return;
     switch (result) {
       case ShareDeletion.cancelled:
@@ -212,6 +228,7 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
                 label: link.hash,
                 downloadLink: true,
                 actionsBelow: true,
+                deleting: _deleting.contains(link.hash),
                 onDelete: () => _delete(link),
               ),
           ]),
@@ -248,7 +265,10 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
         ]),
       ),
       actions: [
-        TextButton(onPressed: _cancelForm, child: const Text('Cancel')),
+        // Not while a link is being created: its answer belongs to this
+        // form, whether it is the new link or the reason there is none.
+        TextButton(
+            onPressed: _busy ? null : _cancelForm, child: const Text('Cancel')),
         FilledButton(
             onPressed: _busy ? null : _create,
             child: const Text('Create link')),
