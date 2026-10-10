@@ -729,6 +729,41 @@ void main() {
     expect(server.links, hasLength(1));
   });
 
+  testWidgets('a refused delete keeps its button off until the list is back',
+      (tester) async {
+    final server = _ShareServer([_link('gone'), _link('open')]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    server.links.removeWhere((l) => l['hash'] == 'gone');
+    server.deleteStatus = 404;
+    final reload = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'GET' ? reload.future : null;
+    await tap(tester, find.byTooltip('Delete link for gone'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    // The delete is answered; the list that will drop the row is not yet.
+    await tap(tester, find.text('New link'));
+    await tap(tester, find.text('Cancel'));
+    expect(
+        tester
+            .widget<IconButton>(find.ancestor(
+                of: find.byTooltip('Delete link for gone'),
+                matching: find.byType(IconButton)))
+            .onPressed,
+        isNull);
+
+    reload.complete();
+    await settle(tester);
+    expect(server.requests('DELETE'), hasLength(1));
+    expect(find.byTooltip('Delete link for gone'), findsNothing);
+    expect(
+        tester
+            .widget<IconButton>(find.ancestor(
+                of: find.byTooltip('Delete link for open'),
+                matching: find.byType(IconButton)))
+            .onPressed,
+        isNotNull);
+  });
+
   testWidgets('a running delete keeps its button off across the form',
       (tester) async {
     final server = _ShareServer([_link('a'), _link('b')]);

@@ -44,7 +44,8 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
   /// The list is asked for again instead.
   int _listVersion = 0;
 
-  /// The hashes of the links whose delete is under way. Kept here, not only
+  /// The hashes of the links whose delete, or the reload of the list after
+  /// a refused one, is under way. Kept here, not only
   /// in the tiles: they are rebuilt when the form is opened and closed, and
   /// their delete buttons must stay off meanwhile.
   final _deleting = <String>{};
@@ -155,13 +156,18 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
 
   Future<void> _delete(ShareLink link) async {
     setState(() => _deleting.add(link.hash));
-    final ShareDeletion result;
     try {
-      result = await deleteShareLink(context, _api, link);
+      final result = await deleteShareLink(context, _api, link);
+      if (mounted) await _applyDeletion(link, result);
     } finally {
+      // Only now: after a refused delete the row stays until the list has
+      // been fetched again, and so must the guard.
       if (mounted) setState(() => _deleting.remove(link.hash));
     }
-    if (!mounted) return;
+  }
+
+  /// Brings the list in line with how the delete of [link] ended.
+  Future<void> _applyDeletion(ShareLink link, ShareDeletion result) async {
     switch (result) {
       case ShareDeletion.cancelled:
         break;

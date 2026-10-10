@@ -72,21 +72,32 @@ class ShareLinkTile extends StatefulWidget {
   State<ShareLinkTile> createState() => _ShareLinkTileState();
 }
 
-class _ShareLinkTileState extends State<ShareLinkTile> {
+class _ShareLinkTileState extends State<ShareLinkTile>
+    with AutomaticKeepAliveClientMixin {
   /// Whether a delete is under way. A second request for the same link would
   /// only be answered with "not found".
   bool _deleting = false;
+
+  /// A long list drops the tiles that are scrolled far out of view, and
+  /// with them this state. Not while a delete is under way: scrolling back
+  /// would show the delete button switched on again.
+  @override
+  bool get wantKeepAlive => _deleting;
 
   Future<void> _copy(String text, String message) async =>
       showMessage(await copyText(text) ? message : 'Could not copy the link');
 
   Future<void> _delete() async {
     setState(() => _deleting = true);
+    updateKeepAlive();
     try {
       await widget.onDelete();
     } finally {
       // The tile is usually gone by now if the link was deleted.
-      if (mounted) setState(() => _deleting = false);
+      if (mounted) {
+        setState(() => _deleting = false);
+        updateKeepAlive();
+      }
     }
   }
 
@@ -122,6 +133,7 @@ class _ShareLinkTileState extends State<ShareLinkTile> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required by the keep-alive mixin.
     final below = widget.actionsBelow;
     final expiry = shareExpiryText(widget.link);
     final owner = widget.owner;

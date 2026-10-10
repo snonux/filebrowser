@@ -261,6 +261,38 @@ void main() {
     expect(server.count('DELETE', '/base/api/share/h2'), 1);
   });
 
+  testWidgets('a running delete keeps its button off when scrolled away',
+      (tester) async {
+    final server = _Server()
+      ..links.addAll([
+        for (var i = 0; i < 60; i++)
+          {'hash': 'x$i', 'path': '/more-$i.txt', 'userID': 1, 'expire': 0},
+      ]);
+    await pumpScreen(tester, server, _user);
+    final deleted = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'DELETE' ? deleted.future : null;
+    await tap(tester, find.byTooltip('Delete link for /mine.txt'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    // Far enough for the list to drop the rows at its top.
+    await tester.drag(find.byType(ListView), const Offset(0, -3000));
+    await settle(tester);
+    expect(find.text('/mine.txt'), findsNothing);
+    await tester.drag(find.byType(ListView), const Offset(0, 3000));
+    await settle(tester);
+    expect(
+        tester
+            .widget<IconButton>(find.ancestor(
+                of: find.byTooltip('Delete link for /mine.txt'),
+                matching: find.byType(IconButton)))
+            .onPressed,
+        isNull);
+
+    deleted.complete();
+    await settle(tester);
+    expect(server.count('DELETE', '/base/api/share/h1'), 1);
+    expect(find.text('/mine.txt'), findsNothing);
+  });
+
   testWidgets('leaving the screen while a link is deleted is harmless',
       (tester) async {
     final server = _Server();
