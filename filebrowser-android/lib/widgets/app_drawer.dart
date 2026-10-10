@@ -44,7 +44,7 @@ class AppDrawer extends ConsumerWidget {
             context.go(AppRoutes.files('/'));
           },
         ),
-        if (session.perm.share)
+        if (session.perm.canShare)
           ListTile(
             leading: const Icon(Icons.link),
             title: const Text('Share links'),

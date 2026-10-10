@@ -1,0 +1,155 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../api/filebrowser_api.dart';
+import '../models/models.dart';
+import '../screens/file_actions.dart';
+import '../utils/format.dart';
+
+/// When a share link stops working, e.g. `Expires 2026-10-09 18:42`.
+String shareExpiryText(ShareLink link) {
+  final at = link.expiresAt;
+  if (at == null) return 'Never expires';
+  return '${at.isAfter(DateTime.now()) ? 'Expires' : 'Expired'} '
+      '${formatDate(at)}';
+}
+
+/// Puts [text] on the clipboard; returns false when the platform refuses,
+/// so the caller does not claim a copy that did not happen.
+Future<bool> copyText(String text) async {
+  try {
+    await Clipboard.setData(ClipboardData(text: text));
+    return true;
+  } on PlatformException {
+    return false;
+  }
+}
+
+/// One share link with its copy and delete buttons, as used by the share
+/// dialog of a file and by the list of all links.
+class ShareLinkTile extends StatefulWidget {
+  const ShareLinkTile({
+    super.key,
+    required this.api,
+    required this.link,
+    required this.title,
+    required this.label,
+    required this.onDelete,
+    this.owner,
+    this.downloadLink = false,
+    this.actionsBelow = false,
+    this.deleting = false,
+  });
+
+  final FileBrowserApi api;
+  final ShareLink link;
+  final String title;
+
+  /// Names the link in the button tooltips, so each button is distinct for
+  /// screen readers when several links are listed.
+  final String label;
+
+  /// Asks for confirmation and deletes the link. The delete button is off
+  /// until it completes, for as long as this tile lives; see [deleting].
+  final Future<void> Function() onDelete;
+
+  /// Whether the owner of the list knows of a delete of this link that is
+  /// under way. It keeps the delete button off when the tile was built anew
+  /// in the meantime, which this tile cannot know by itself.
+  final bool deleting;
+
+  /// The user name of the link's owner, when it is worth showing.
+  final String? owner;
+
+  /// Whether to offer the direct download link as well.
+  final bool downloadLink;
+
+  /// Puts the buttons under the text instead of beside it; a dialog is too
+  /// narrow to fit a whole address next to three buttons.
+  final bool actionsBelow;
+
+  @override
+  State<ShareLinkTile> createState() => _ShareLinkTileState();
+}
+
+class _ShareLinkTileState extends State<ShareLinkTile>
+    with AutomaticKeepAliveClientMixin {
+  /// Whether a delete is under way. A second request for the same link would
+  /// only be answered with "not found".
+  bool _deleting = false;
+
+  /// A long list drops the tiles that are scrolled far out of view, and
+  /// with them this state. Not while a delete is under way: scrolling back
+  /// would show the delete button switched on again.
+  @override
+  bool get wantKeepAlive => _deleting;
+
+  Future<void> _copy(String text, String message) async =>
+      showMessage(await copyText(text) ? message : 'Could not copy the link');
+
+  Future<void> _delete() async {
+    setState(() => _deleting = true);
+    updateKeepAlive();
+    try {
+      await widget.onDelete();
+    } finally {
+      // The tile is usually gone by now if the link was deleted.
+      if (mounted) {
+        setState(() => _deleting = false);
+        updateKeepAlive();
+      }
+    }
+  }
+
+  List<Widget> _actions() {
+    final api = widget.api;
+    final link = widget.link;
+    final label = widget.label;
+    return [
+      IconButton(
+        tooltip: 'Copy link for $label',
+        icon: const Icon(Icons.copy),
+        onPressed: () => _copy(api.shareUrl(link), 'Link copied'),
+      ),
+      if (widget.downloadLink)
+        IconButton(
+          // A direct download cannot ask for the password, so the web UI
+          // disables this for protected links; so does the app.
+          tooltip: link.hasPassword
+              ? 'No download link for $label: it has a password'
+              : 'Copy download link for $label',
+          icon: const Icon(Icons.download_for_offline_outlined),
+          onPressed: link.hasPassword
+              ? null
+              : () => _copy(api.shareDownloadUrl(link), 'Download link copied'),
+        ),
+      IconButton(
+        tooltip: 'Delete link for $label',
+        icon: const Icon(Icons.delete_outline),
+        onPressed: _deleting || widget.deleting ? null : _delete,
+      ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // Required by the keep-alive mixin.
+    final below = widget.actionsBelow;
+    final expiry = shareExpiryText(widget.link);
+    final owner = widget.owner;
+    final tile = ListTile(
+      contentPadding: below ? EdgeInsets.zero : null,
+      leading: Icon(widget.link.hasPassword ? Icons.lock : Icons.link),
+      title: Text(widget.title),
+      subtitle: Text(owner == null ? expiry : '$expiry · $owner'),
+      trailing: below
+          ? null
+          : Row(mainAxisSize: MainAxisSize.min, children: _actions()),
+    );
+    if (!below) return tile;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      tile,
+      Row(mainAxisAlignment: MainAxisAlignment.end, children: _actions()),
+    ]);
+  }
+}

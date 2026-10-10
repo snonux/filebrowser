@@ -323,6 +323,7 @@ class FileActions {
     return file;
   }
 
+  /// Shows the item's public links and lets the user add or delete one.
   Future<void> share(BuildContext context, FileItem item) => showDialog<void>(
       context: context, builder: (_) => ShareDialog(item: item));
 
@@ -331,59 +332,63 @@ class FileActions {
 
   /// The actions menu for one item, limited to what the account may do.
   Future<void> showMenu(BuildContext context, FileItem item) {
-    final perm = ref.read(requireSessionProvider).perm;
     return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      builder: (sheet) {
-        Widget tile(IconData icon, String label, Future<void> Function() run) =>
+      builder: (sheet) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
             ListTile(
-              leading: Icon(icon),
-              title: Text(label),
-              onTap: () {
-                Navigator.pop(sheet);
-                run();
-              },
-            );
-        return SafeArea(
-          child: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              ListTile(
-                title: Text(item.name,
-                    style: Theme.of(context).textTheme.titleMedium),
-                subtitle: Text(item.isDir
-                    ? 'Folder'
-                    : '${formatSize(item.size)} · ${formatDate(item.modified)}'),
-              ),
-              tile(Icons.open_in_new, 'Open', () => open(context, item)),
-              if (perm.download && opensInApp(item))
-                tile(Icons.open_in_browser, 'Open with another app',
-                    () => download(item, openWhenDone: true)),
-              if (perm.download)
-                tile(
-                    Icons.download,
-                    item.isDir ? 'Download as zip' : 'Download',
-                    () => download(item)),
-              if (perm.rename)
-                tile(Icons.drive_file_rename_outline, 'Rename',
-                    () => rename(context, item)),
-              if (perm.create)
-                tile(Icons.copy, 'Copy to…',
-                    () => transferTo(context, [item], copy: true)),
-              if (perm.rename)
-                tile(Icons.drive_file_move_outline, 'Move to…',
-                    () => transferTo(context, [item], copy: false)),
-              if (perm.share)
-                tile(Icons.share, 'Share link', () => share(context, item)),
-              tile(Icons.info_outline, 'Info', () => info(context, item)),
-              if (perm.delete)
-                tile(Icons.delete_outline, 'Delete',
-                    () => delete(context, [item])),
-            ]),
-          ),
-        );
-      },
+              title: Text(item.name,
+                  style: Theme.of(context).textTheme.titleMedium),
+              subtitle: Text(item.isDir
+                  ? 'Folder'
+                  : '${formatSize(item.size)} · ${formatDate(item.modified)}'),
+            ),
+            ..._menuTiles(context, sheet, item),
+          ]),
+        ),
+      ),
     );
+  }
+
+  /// The entries of [showMenu]. Each closes the [sheet] before it runs, so
+  /// the action's own dialogs open from [context], which outlives the sheet.
+  List<Widget> _menuTiles(
+      BuildContext context, BuildContext sheet, FileItem item) {
+    final perm = ref.read(requireSessionProvider).perm;
+    Widget tile(IconData icon, String label, Future<void> Function() run) =>
+        ListTile(
+          leading: Icon(icon),
+          title: Text(label),
+          onTap: () {
+            Navigator.pop(sheet);
+            run();
+          },
+        );
+    return [
+      tile(Icons.open_in_new, 'Open', () => open(context, item)),
+      if (perm.download && opensInApp(item))
+        tile(Icons.open_in_browser, 'Open with another app',
+            () => download(item, openWhenDone: true)),
+      if (perm.download)
+        tile(Icons.download, item.isDir ? 'Download as zip' : 'Download',
+            () => download(item)),
+      if (perm.rename)
+        tile(Icons.drive_file_rename_outline, 'Rename',
+            () => rename(context, item)),
+      if (perm.create)
+        tile(Icons.copy, 'Copy to…',
+            () => transferTo(context, [item], copy: true)),
+      if (perm.rename)
+        tile(Icons.drive_file_move_outline, 'Move to…',
+            () => transferTo(context, [item], copy: false)),
+      if (perm.canShare)
+        tile(Icons.share, 'Share link', () => share(context, item)),
+      tile(Icons.info_outline, 'Info', () => info(context, item)),
+      if (perm.delete)
+        tile(Icons.delete_outline, 'Delete', () => delete(context, [item])),
+    ];
   }
 }
 

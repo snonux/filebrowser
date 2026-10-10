@@ -18,5 +18,12 @@ flutter_secure_storage.
   `lib/services/device_files.dart` so tests can replace it.
 - Do not commit the generated `linux/` runner, `android/key.properties`, key
   stores, or build output.
-- Releases use `android-vX.Y.Z` tags; `vX.Y.Z` tags belong to the server. See
-  [docs/fdroid-release.md](docs/fdroid-release.md).
+- Releases use `android-vX.Y.Z` tags; `vX.Y.Z` tags belong to the server. To
+  release: bump `pubspec.yaml` and the fastlane changelog, commit, push to
+  `master` (the default branch, not `main`), then start the release workflow
+  with the tag, which creates it:
+  `gh workflow run android-release.yml -R snonux/filebrowser --ref master -f tag=android-vX.Y.Z`.
+  Do not create or push the tag with git. This needs the workflow on `master`
+  to have the tag-creating step; see
+  [docs/fdroid-release.md](docs/fdroid-release.md) for the check and the
+  release steps.

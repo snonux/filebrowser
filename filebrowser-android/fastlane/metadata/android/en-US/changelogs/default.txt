@@ -1,1 +1,3 @@
 PDF viewer, video and audio player, and "Open with another app" in the file menu.
+
+Sharing now works like in the web interface: see the links a file or folder already has, copy a link or a direct download link, delete links, and set a lifetime in seconds, minutes, hours or days with an optional password. Administrators see whose link each one is.
