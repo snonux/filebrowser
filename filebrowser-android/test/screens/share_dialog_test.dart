@@ -416,6 +416,29 @@ void main() {
     expect(server.requests('POST'), isEmpty);
   });
 
+  testWidgets('a finished delete does not close the form opened meanwhile',
+      (tester) async {
+    final server = _ShareServer([_link('a'), _link('b')]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    final deleted = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'DELETE' ? deleted.future : null;
+    await tap(tester, find.byTooltip('Delete link for a'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await tap(tester, find.text('New link'));
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password (optional)'), 'typing');
+
+    deleted.complete();
+    await settle(tester);
+    // Still the form, with what was typed; the list behind it is up to date.
+    expect(find.text('Create link'), findsOneWidget);
+    expect(find.text('typing'), findsOneWidget);
+    await tap(tester, find.text('Cancel'));
+    expect(find.text('http://fb.local/base/share/a'), findsNothing);
+    expect(find.text('http://fb.local/base/share/b'), findsOneWidget);
+  });
+
   testWidgets('a reload does not close the form opened meanwhile',
       (tester) async {
     final server = _ShareServer([_link('gone'), _link('open')]);

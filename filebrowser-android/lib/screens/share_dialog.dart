@@ -153,7 +153,8 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
         setState(() {
           _listVersion++;
           _links = _links!.where((l) => l.hash != link.hash).toList();
-          _adding = _links!.isEmpty;
+          // As in [_load]: keep a form the user opened meanwhile.
+          _adding = _adding || _links!.isEmpty;
         });
       case ShareDeletion.failed:
         await _load();
