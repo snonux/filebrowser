@@ -45,4 +45,45 @@ void main() {
     expect(ShareLink.fromJson({'hash': 'h', 'expire': 60}).expiresAt,
         DateTime.fromMillisecondsSinceEpoch(60000, isUtc: true));
   });
+
+  test('parseShareExpiry accepts whole numbers the web UI allows', () {
+    expect(parseShareExpiry(''), 0);
+    expect(parseShareExpiry('  '), 0);
+    expect(parseShareExpiry('0'), 0);
+    expect(parseShareExpiry(' 12 '), 12);
+    expect(parseShareExpiry('2147483647'), 2147483647);
+  });
+
+  test('parseShareExpiry rejects anything else', () {
+    for (final bad in [
+      '-1',
+      '+3',
+      '1.5',
+      '1,5',
+      '3 days',
+      'abc',
+      '0x10',
+      '2147483648',
+      '99999999999999999999999',
+    ]) {
+      expect(parseShareExpiry(bad), isNull, reason: bad);
+    }
+  });
+
+  test('sortShareLinks puts permanent links first, then soonest expiry', () {
+    ShareLink link(String hash, int expire) =>
+        ShareLink(hash: hash, path: '/f', expire: expire);
+    final sorted = sortShareLinks(
+        [link('late', 900), link('never', 0), link('soon', 100)]);
+    expect(sorted.map((l) => l.hash), ['never', 'soon', 'late']);
+  });
+
+  test('sharing needs both the share and the download permission', () {
+    Permissions perm(bool share, bool download) =>
+        Permissions.fromJson({'share': share, 'download': download});
+    expect(perm(true, true).canShare, isTrue);
+    expect(perm(true, false).canShare, isFalse);
+    expect(perm(false, true).canShare, isFalse);
+    expect(const Permissions().canShare, isFalse);
+  });
 }

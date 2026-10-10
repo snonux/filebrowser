@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:filebrowser_android/api/filebrowser_api.dart';
+import 'package:filebrowser_android/models/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_adapter.dart';
@@ -153,13 +156,142 @@ void main() {
         hits.map((h) => (h.path, h.isDir)), [('a/b.txt', false), ('c', true)]);
   });
 
-  test('createShare sends expiry as a string', () async {
-    api = build((_) => reply(200,
-        body: {'hash': 'h1', 'path': '/f', 'expire': 0, 'hasPassword': false}))
-      ..token = 'a.b.c';
-    final share = await api.createShare('/f', expires: 3, unit: 'days');
-    expect(adapter.requests.single.data, contains('"expires":"3"'));
-    expect(api.shareUrl(share), 'http://fb.local/base/share/h1');
+  group('shares', () {
+    const link = {
+      'hash': 'h1',
+      'path': '/f',
+      'userID': 7,
+      'expire': 0,
+      'hasPassword': false
+    };
+    Map<String, dynamic> sentBody() =>
+        jsonDecode(adapter.requests.single.data as String)
+            as Map<String, dynamic>;
+
+    test('createShare sends expiry as a string', () async {
+      api = build((_) => reply(200, body: link))..token = 'a.b.c';
+      final share = await api.createShare('/a dir/f#1',
+          expires: 3, unit: 'days', password: 'pw');
+      final request = adapter.requests.single;
+      expect(request.method, 'POST');
+      expect(request.uri.toString(),
+          'http://fb.local/base/api/share/a%20dir/f%231');
+      expect(sentBody(), {'password': 'pw', 'expires': '3', 'unit': 'days'});
+      expect(share.hash, 'h1');
+      expect(share.userId, 7);
+    });
+
+    test('createShare without options asks for a permanent open link',
+        () async {
+      api = build((_) => reply(200, body: link))..token = 'a.b.c';
+      await api.createShare('/f');
+      expect(sentBody(), {'password': '', 'expires': '', 'unit': 'hours'});
+    });
+
+    test('createShare accepts every unit of the web UI', () async {
+      for (final unit in ['seconds', 'minutes', 'hours', 'days']) {
+        api = build((_) => reply(200, body: link))..token = 'a.b.c';
+        await api.createShare('/f', expires: 1, unit: unit);
+        expect(sentBody()['unit'], unit);
+      }
+    });
+
+    test('createShare refuses bad options without calling the server', () {
+      api = build((_) => reply(200, body: link))..token = 'a.b.c';
+      expect(() => api.createShare('/f', expires: -1), throwsArgumentError);
+      expect(() => api.createShare('/f', expires: 2147483648),
+          throwsArgumentError);
+      expect(() => api.createShare('/f', expires: 1, unit: 'weeks'),
+          throwsArgumentError);
+      expect(adapter.requests, isEmpty);
+    });
+
+    test('createShare reports a missing share permission', () async {
+      api = build((_) => reply(403))..token = 'a.b.c';
+      expect(
+          () => api.createShare('/f'),
+          throwsA(isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 403)));
+    });
+
+    test('createShare reports a server error', () async {
+      api = build((_) => reply(500, body: 'boom'))..token = 'a.b.c';
+      expect(
+          () => api.createShare('/f'),
+          throwsA(isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 500)));
+    });
+
+    test('sharesFor lists the links of one path', () async {
+      api = build((_) => reply(200, body: [
+            link,
+            {...link, 'hash': 'h2', 'hasPassword': true}
+          ]))
+        ..token = 'a.b.c';
+      final links = await api.sharesFor('/a dir/f');
+      expect(adapter.requests.single.method, 'GET');
+      expect(adapter.requests.single.uri.toString(),
+          'http://fb.local/base/api/share/a%20dir/f');
+      expect(links.map((l) => (l.hash, l.hasPassword)),
+          [('h1', false), ('h2', true)]);
+    });
+
+    test('sharesFor of the root folder', () async {
+      api = build((_) => reply(200, body: []))..token = 'a.b.c';
+      expect(await api.sharesFor('/'), isEmpty);
+      expect(adapter.requests.single.uri.toString(),
+          'http://fb.local/base/api/share/');
+    });
+
+    test('shares lists every link of the account', () async {
+      api = build((_) => reply(200, body: [link]))..token = 'a.b.c';
+      expect((await api.shares()).single.path, '/f');
+      expect(adapter.requests.single.uri.toString(),
+          'http://fb.local/base/api/shares');
+    });
+
+    test('deleteShare addresses the link by its hash', () async {
+      api = build((_) => reply(200))..token = 'a.b.c';
+      await api.deleteShare('a-b_c');
+      expect(adapter.requests.single.method, 'DELETE');
+      expect(adapter.requests.single.uri.toString(),
+          'http://fb.local/base/api/share/a-b_c');
+    });
+
+    test('deleteShare reports a link that is already gone', () async {
+      api = build((_) => reply(404))..token = 'a.b.c';
+      expect(
+          () => api.deleteShare('h1'),
+          throwsA(isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 404)));
+    });
+
+    test('usernames maps account ids to names', () async {
+      api = build((_) => reply(200, body: [
+            {'id': 1, 'username': 'admin'},
+            {'id': 7, 'username': 'bob'}
+          ]))
+        ..token = 'a.b.c';
+      expect(await api.usernames(), {1: 'admin', 7: 'bob'});
+      expect(adapter.requests.single.uri.toString(),
+          'http://fb.local/base/api/users');
+    });
+
+    test('links point at the configured address, base path included', () {
+      final share = ShareLink.fromJson(link);
+      api = build((_) => reply(200));
+      expect(api.shareUrl(share), 'http://fb.local/base/share/h1');
+      expect(api.shareDownloadUrl(share),
+          'http://fb.local/base/api/public/dl/h1?inline=true');
+    });
+
+    test('links for a server without a base path', () {
+      final share = ShareLink.fromJson(link);
+      final plain = FileBrowserApi(baseUrl: 'files.example.com:8443/');
+      expect(plain.shareUrl(share), 'https://files.example.com:8443/share/h1');
+      expect(plain.shareDownloadUrl(share),
+          'https://files.example.com:8443/api/public/dl/h1?inline=true');
+    });
   });
 
   test('preview and raw URLs', () {

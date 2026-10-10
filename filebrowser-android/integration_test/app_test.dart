@@ -3,6 +3,7 @@
 // Run it with test/e2e/run_e2e.sh, which builds and seeds the server, starts
 // a basic-auth proxy in front of it and passes the addresses below. It drives
 // the real UI and checks every result on the server through the API.
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui' as ui;
@@ -458,16 +459,34 @@ void main() {
     await enter(tester, 'Expires after', '2');
     await screenshot(tester, '6-share');
     await tapText(tester, 'Create link');
-    await waitFor(tester, find.text('Link created'));
+    // The dialog returns to the item's links; the new one is in the clipboard
+    // and points at the server address the app signed in to.
+    await waitFor(tester, find.text('New link'));
     final link = (await Clipboard.getData('text/plain'))!.text!;
     expect(link, startsWith('$serverUrl/share/'));
+    expect(find.text(link), findsOneWidget);
     final hash = link.split('/').last;
     final public = await HttpClient()
         .getUrl(Uri.parse('$serverUrl/api/public/share/$hash'))
         .then((r) => r.close());
     expect(public.statusCode, 200);
     await public.drain<void>();
-    await tapText(tester, 'Done');
+
+    // The download link serves the file itself, without signing in.
+    await tap(tester, find.byTooltip('Copy download link for $hash'));
+    final direct = (await Clipboard.getData('text/plain'))!.text!;
+    expect(direct, '$serverUrl/api/public/dl/$hash?inline=true');
+    final served =
+        await HttpClient().getUrl(Uri.parse(direct)).then((r) => r.close());
+    expect(served.statusCode, 200);
+    expect(await served.transform(utf8.decoder).join(),
+        contains('Seeded by the e2e test.'));
+    await tapText(tester, 'Close');
+
+    // Sharing the same file again lists the link instead of the empty form.
+    await itemAction(tester, 'readme.md', 'Share link');
+    await waitFor(tester, find.text(link));
+    await tapText(tester, 'Close');
 
     await tap(tester, find.byTooltip('Open navigation menu'));
     await tapText(tester, 'Share links');
