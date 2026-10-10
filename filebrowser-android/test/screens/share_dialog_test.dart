@@ -439,6 +439,40 @@ void main() {
     expect(find.widgetWithText(TextField, 'Expires after'), findsOneWidget);
   });
 
+  testWidgets('a link that a list already brought is not listed twice',
+      (tester) async {
+    final server = _ShareServer([_link('gone'), _link('open')]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    // A delete fails and fetches the list while a link is being created.
+    // The server has stored the link already, so the list has it before
+    // the answer to the create arrives.
+    server.links.removeWhere((l) => l['hash'] == 'gone');
+    server.deleteStatus = 404;
+    server.staleList = [_link('open'), _link('new1')];
+    final deleted = Completer<void>();
+    final created = Completer<void>();
+    server.adapter.hold = (o) => switch (o.method) {
+          'DELETE' => deleted.future,
+          'POST' => created.future,
+          _ => null,
+        };
+    await tap(tester, find.byTooltip('Delete link for gone'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await tap(tester, find.text('New link'));
+    await tap(tester, find.text('Create link'));
+    deleted.complete();
+    await settle(tester);
+    created.complete();
+    await settle(tester);
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('http://fb.local/base/share/new1'), findsOneWidget);
+    expect(find.text('http://fb.local/base/share/open'), findsOneWidget);
+    expect(find.text('http://fb.local/base/share/gone'), findsNothing);
+    expect(server.requests('POST'), hasLength(1));
+  });
+
   testWidgets('a late list does not undo a link created meanwhile',
       (tester) async {
     final server = _ShareServer([_link('gone'), _link('open')]);

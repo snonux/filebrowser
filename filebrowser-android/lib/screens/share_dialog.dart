@@ -133,7 +133,9 @@ class _ShareDialogState extends ConsumerState<ShareDialog> {
     _password.clear();
     setState(() {
       _listVersion++;
-      _links = sortShareLinks([...?_links, share]);
+      // A list fetched while the link was being created may have it already.
+      _links = sortShareLinks(
+          [...?_links?.where((l) => l.hash != share.hash), share]);
       _unit = 'hours';
       _adding = false;
     });
