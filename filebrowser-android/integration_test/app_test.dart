@@ -148,6 +148,23 @@ Future<void> back(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 300));
 }
 
+/// Swipes [finder] to the left like a finger does, in many small moves.
+///
+/// `tester.drag` jumps past the touch slop in a single move. Android reports
+/// its own, smaller slops (8 px to start a drag, 16 px to start a pan), so
+/// that jump crosses both at once and the image viewer's InteractiveViewer
+/// wins the gesture over the PageView around it. Small moves cross the drag
+/// slop first, as a real swipe does.
+Future<void> swipeLeft(WidgetTester tester, Finder finder,
+    {double distance = 700}) async {
+  const step = 5.0;
+  final gesture = await tester.startGesture(tester.getCenter(finder));
+  for (var moved = 0.0; moved < distance; moved += step) {
+    await gesture.moveBy(const Offset(-step, 0));
+  }
+  await gesture.up();
+}
+
 void closeDrawer(WidgetTester tester) =>
     tester.state<ScaffoldState>(find.byType(Scaffold).last).closeDrawer();
 
@@ -387,7 +404,7 @@ void main() {
     await waitFor(tester, find.text('1 / 2'));
     await waitForImages(tester, 1);
     await screenshot(tester, '4-viewer');
-    await tester.drag(find.byType(PageView), const Offset(-700, 0));
+    await swipeLeft(tester, find.byType(PageView));
     await waitFor(tester, find.text('2 / 2'));
     expect(find.text('red.png'), findsOneWidget);
     await back(tester);

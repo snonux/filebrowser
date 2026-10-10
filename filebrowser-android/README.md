@@ -85,4 +85,6 @@ FB_E2E_DEVICE=emulator-5554 test/e2e/run_e2e.sh
 ```
 
 The script then points the app at `10.0.2.2`, the emulator's address for the
-host.
+host. If port 18080 or 18081 is taken on the host, set `FB_E2E_PORT` and
+`FB_E2E_PROXY_PORT`. `FB_E2E_SHOTS` only works for the Linux build, because
+the screenshots are written by the app itself.

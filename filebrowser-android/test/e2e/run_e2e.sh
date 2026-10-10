@@ -79,6 +79,13 @@ for _ in $(seq 50); do
   curl -sf "http://127.0.0.1:$PORT/health" >/dev/null && break
   sleep 0.2
 done
+# Another program on the port answers the health check too, or the app would
+# be pointed at it; the server only stays up when it could bind the port.
+if ! kill -0 "${pids[0]}" 2>/dev/null; then
+  echo "File Browser did not start; set FB_E2E_PORT if :$PORT is taken" >&2
+  cat "$WORK/server.log" >&2
+  exit 1
+fi
 
 cd "$APP_DIR"
 if [ "$DEVICE" = linux ] && [ ! -d linux ]; then
