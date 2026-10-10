@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:filebrowser_android/api/filebrowser_api.dart';
 import 'package:filebrowser_android/models/models.dart';
@@ -199,6 +201,80 @@ void main() {
     expect(server.count('GET', '/base/api/shares'), 2);
     expect(find.text('/mine.txt'), findsNothing);
     expect(find.text('/theirs.txt'), findsOneWidget);
+  });
+
+  testWidgets('the delete button stays off until the row is gone',
+      (tester) async {
+    final server = _Server();
+    await pumpScreen(tester, server, _user);
+    final refetch = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'GET' ? refetch.future : null;
+    await tap(tester, find.byTooltip('Delete link for /mine.txt'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    // Deleted on the server, but the new list has not arrived yet.
+    expect(server.count('DELETE', '/base/api/share/h1'), 1);
+    expect(
+        tester
+            .widget<IconButton>(find.ancestor(
+                of: find.byTooltip('Delete link for /mine.txt'),
+                matching: find.byType(IconButton)))
+            .onPressed,
+        isNull);
+
+    refetch.complete();
+    await settle(tester);
+    expect(find.text('/mine.txt'), findsNothing);
+    expect(
+        tester
+            .widget<IconButton>(find.ancestor(
+                of: find.byTooltip('Delete link for /theirs.txt'),
+                matching: find.byType(IconButton)))
+            .onPressed,
+        isNotNull);
+  });
+
+  testWidgets('leaving the screen while a link is deleted is harmless',
+      (tester) async {
+    final server = _Server();
+    await pumpScreen(tester, server, _user);
+    final deleted = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'DELETE' ? deleted.future : null;
+    await tap(tester, find.byTooltip('Delete link for /mine.txt'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpWidget(const SizedBox());
+
+    deleted.complete();
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+    // The screen is gone, so nothing is fetched for it.
+    expect(server.count('GET', '/base/api/shares'), 1);
+  });
+
+  testWidgets('pulling down fetches the links and the owners again',
+      (tester) async {
+    final server = _Server();
+    await pumpScreen(tester, server, _admin);
+    server.links.removeWhere((l) => l['hash'] == 'h2');
+    await tester.fling(find.text('/mine.txt'), const Offset(0, 400), 1000);
+    await settle(tester);
+    await settle(tester);
+    expect(server.count('GET', '/base/api/shares'), 2);
+    expect(server.count('GET', '/base/api/users'), 2);
+    expect(find.text('/theirs.txt'), findsNothing);
+    expect(find.text('/mine.txt'), findsOneWidget);
+  });
+
+  testWidgets('a refresh that fails shows the reason', (tester) async {
+    final server = _Server();
+    await pumpScreen(tester, server, _user);
+    server.sharesStatus = 500;
+    await tester.fling(find.text('/mine.txt'), const Offset(0, 400), 1000);
+    await settle(tester);
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+    expect(server.count('GET', '/base/api/shares'), 2);
+    expect(find.text('/mine.txt'), findsNothing);
+    expect(find.textContaining('500'), findsOneWidget);
   });
 
   group('drawer', () {

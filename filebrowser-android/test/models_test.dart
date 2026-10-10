@@ -47,16 +47,16 @@ void main() {
   });
 
   test('parseShareExpiry accepts whole numbers the web UI allows', () {
-    expect(parseShareExpiry(''), 0);
-    expect(parseShareExpiry('  '), 0);
-    expect(parseShareExpiry('0'), 0);
-    expect(parseShareExpiry(' 12 '), 12);
-    expect(parseShareExpiry('2147483647'), 2147483647);
+    expect(parseShareExpiry('', 'seconds'), 0);
+    expect(parseShareExpiry('  ', 'seconds'), 0);
+    expect(parseShareExpiry('0', 'seconds'), 0);
+    expect(parseShareExpiry(' 12 ', 'seconds'), 12);
+    expect(parseShareExpiry('2147483647', 'seconds'), 2147483647);
   });
 
   test('parseShareExpiry ignores surrounding whitespace and leading zeros', () {
-    expect(parseShareExpiry('007'), 7);
-    expect(parseShareExpiry('\t12\n'), 12);
+    expect(parseShareExpiry('007', 'seconds'), 7);
+    expect(parseShareExpiry('\t12\n', 'seconds'), 12);
   });
 
   test('parseShareExpiry rejects anything else', () {
@@ -74,7 +74,7 @@ void main() {
       '2147483648',
       '99999999999999999999999',
     ]) {
-      expect(parseShareExpiry(bad), isNull, reason: bad);
+      expect(parseShareExpiry(bad, 'seconds'), isNull, reason: bad);
     }
   });
 

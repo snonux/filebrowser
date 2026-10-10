@@ -243,14 +243,45 @@ void main() {
         () async {
       api = build((o) => reply(200, body: o.method == 'GET' ? [link] : link))
         ..token = 'a.b.c';
-      await api.sharesFor('/a dir/sub', isDir: true);
       await api.createShare('/a dir/sub/', isDir: true);
+      await api.sharesFor('/a dir/sub', isDir: true);
       await api.sharesFor('/', isDir: true);
       expect(adapter.requests.map((r) => '${r.method} ${r.uri}'), [
-        'GET http://fb.local/base/api/share/a%20dir/sub/',
         'POST http://fb.local/base/api/share/a%20dir/sub/',
+        'GET http://fb.local/base/api/share/a%20dir/sub/',
+        // Links stored without the slash are asked for as well.
+        'GET http://fb.local/base/api/share/a%20dir/sub',
+        // The root has only one spelling.
         'GET http://fb.local/base/api/share/',
       ]);
+    });
+
+    test('sharesFor merges both spellings of a folder by hash', () async {
+      api = build((o) => reply(200,
+          body: o.uri.path.endsWith('/')
+              ? [
+                  {...link, 'hash': 'web', 'path': '/d/'},
+                  {...link, 'hash': 'both', 'path': '/d/'},
+                ]
+              : [
+                  {...link, 'hash': 'both', 'path': '/d/'},
+                  {...link, 'hash': 'old-app', 'path': '/d'},
+                ]))
+        ..token = 'a.b.c';
+      final links = await api.sharesFor('/d', isDir: true);
+      expect(links.map((l) => l.hash).toList()..sort(),
+          ['both', 'old-app', 'web']);
+    });
+
+    test('sharesFor fails when either spelling of a folder cannot be listed',
+        () async {
+      api = build(
+          (o) => o.uri.path.endsWith('/') ? reply(200, body: []) : reply(500))
+        ..token = 'a.b.c';
+      expect(
+          () => api.sharesFor('/d', isDir: true),
+          throwsA(isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 500)));
     });
 
     test('a file is addressed without a trailing slash', () async {

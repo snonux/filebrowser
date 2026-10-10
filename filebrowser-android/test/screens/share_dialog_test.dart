@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -317,6 +318,8 @@ void main() {
     // non-admin's links by the exact path.
     expect(server.adapter.requests.map((r) => '${r.method} ${r.uri}'), [
       'GET http://fb.local/base/api/share/docs/album/',
+      // Links stored without the slash, as version 0.1.0 made them.
+      'GET http://fb.local/base/api/share/docs/album',
       'POST http://fb.local/base/api/share/docs/album/',
     ]);
   });
@@ -349,6 +352,8 @@ void main() {
 
     await tap(tester, find.text('days'));
     await tap(tester, find.text('hours').last);
+    // The limit named belongs to the other unit, so the complaint goes.
+    expect(find.textContaining('Enter a whole number'), findsNothing);
     await tap(tester, find.text('Create link'));
     expect(postedBody(server), {
       'password': '',
@@ -373,6 +378,7 @@ void main() {
     expect(server.requests('GET'), hasLength(2));
     expect(find.text('http://fb.local/base/share/new1'), findsOneWidget);
     expect(find.text('http://fb.local/base/share/old'), findsOneWidget);
+    expect(find.textContaining('could not be loaded'), findsNothing);
   });
 
   testWidgets('a list that still cannot be loaded shows the new link',
@@ -384,6 +390,102 @@ void main() {
     expect(server.requests('GET'), hasLength(2));
     expect(find.text('http://fb.local/base/share/new1'), findsOneWidget);
     expect(find.text('New link'), findsOneWidget);
+    // The one link shown is not presented as the whole list.
+    expect(find.textContaining('there may be more than are listed here'),
+        findsOneWidget);
+  });
+
+  testWidgets('correcting the lifetime clears its error', (tester) async {
+    final server = _ShareServer();
+    await pumpApp(tester, server);
+    await openShare(tester);
+    final field = find.widgetWithText(TextField, 'Expires after');
+    await tester.enterText(field, 'soon');
+    await tap(tester, find.text('Create link'));
+    expect(find.textContaining('Enter a whole number'), findsOneWidget);
+    await tester.enterText(field, '5');
+    await settle(tester);
+    expect(find.textContaining('Enter a whole number'), findsNothing);
+    expect(server.requests('POST'), isEmpty);
+  });
+
+  testWidgets('a reload does not close the form opened meanwhile',
+      (tester) async {
+    final server = _ShareServer([_link('gone'), _link('open')]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    // The delete fails, so the list is fetched again; that answer is late.
+    server.deleteStatus = 404;
+    final reload = Completer<void>();
+    server.adapter.hold = (o) =>
+        o.method == 'GET' && server.requests('GET').length > 1
+            ? reload.future
+            : null;
+    await tap(tester, find.byTooltip('Delete link for gone'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await tap(tester, find.text('New link'));
+    expect(find.text('Create link'), findsOneWidget);
+
+    reload.complete();
+    await settle(tester);
+    expect(find.text('Create link'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Expires after'), findsOneWidget);
+  });
+
+  testWidgets('closing the dialog while a link is created is harmless',
+      (tester) async {
+    final server = _ShareServer();
+    await pumpApp(tester, server);
+    await openShare(tester);
+    final created = Completer<void>();
+    server.adapter.hold = (o) => o.method == 'POST' ? created.future : null;
+    await tap(tester, find.text('Create link'));
+    // No second request while the first is under way.
+    expect(
+        tester
+            .widget<FilledButton>(
+                find.widgetWithText(FilledButton, 'Create link'))
+            .onPressed,
+        isNull);
+    await tap(tester, find.text('Cancel'));
+    expect(find.text('Create link'), findsNothing);
+
+    created.complete();
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+    // The link exists, so it is still copied and announced.
+    expect(clipboard, ['http://fb.local/base/share/new1']);
+    expect(find.text('Link created and copied'), findsOneWidget);
+  });
+
+  testWidgets('deleting one of several links leaves the others usable',
+      (tester) async {
+    final server = _ShareServer([_link('a'), _link('b'), _link('c')]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    final first = tester
+        .widgetList<Text>(find.textContaining('http://fb.local/base/share/'))
+        .first
+        .data!
+        .split('/')
+        .last;
+    await tap(tester, find.byTooltip('Delete link for $first'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    expect(find.byTooltip('Delete link for $first'), findsNothing);
+    final rest = ['a', 'b', 'c']..remove(first);
+    for (final hash in rest) {
+      expect(
+          tester
+              .widget<IconButton>(find.ancestor(
+                  of: find.byTooltip('Delete link for $hash'),
+                  matching: find.byType(IconButton)))
+              .onPressed,
+          isNotNull,
+          reason: hash);
+    }
+    await tap(tester, find.byTooltip('Delete link for ${rest.first}'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    expect(server.links.map((l) => l['hash']), [rest.last]);
   });
 
   testWidgets('a failed copy still shows the link that was created',

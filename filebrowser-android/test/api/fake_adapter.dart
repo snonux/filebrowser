@@ -13,12 +13,18 @@ class FakeAdapter implements HttpClientAdapter {
   /// Headers as sent; a retried request reuses and changes its options.
   final sentHeaders = <Map<String, dynamic>>[];
 
+  /// When set, a request is answered only once the future this returns for
+  /// it completes; null answers it at once. For tests of what happens while
+  /// a request is under way.
+  Future<void>? Function(RequestOptions options)? hold;
+
   @override
   Future<ResponseBody> fetch(RequestOptions options,
       Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
     if (requestStream != null) await requestStream.drain<void>();
     requests.add(options);
     sentHeaders.add(Map.of(options.headers));
+    await hold?.call(options);
     return handler(options);
   }
 

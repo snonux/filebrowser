@@ -460,8 +460,10 @@ void main() {
     await screenshot(tester, '6-share');
     await tapText(tester, 'Create link');
     // The dialog returns to the item's links; the new one is in the clipboard
-    // and points at the server address the app signed in to.
+    // and points at the server address the app signed in to. The link is
+    // listed before it is copied, so wait for the message that it was.
     await waitFor(tester, find.text('New link'));
+    await waitFor(tester, find.text('Link created and copied'));
     final link = (await Clipboard.getData('text/plain'))!.text!;
     expect(link, startsWith('$serverUrl/share/'));
     expect(find.text(link), findsOneWidget);
@@ -474,6 +476,8 @@ void main() {
 
     // The download link serves the file itself, without signing in.
     await tap(tester, find.byTooltip('Copy download link for $hash'));
+    // The message appears once the copy is done.
+    await waitFor(tester, find.text('Download link copied'));
     final direct = (await Clipboard.getData('text/plain'))!.text!;
     expect(direct, '$serverUrl/api/public/dl/$hash?inline=true');
     final served =
@@ -493,9 +497,20 @@ void main() {
     await itemAction(tester, 'photos', 'Share link');
     await tapText(tester, 'Create link');
     await waitFor(tester, find.text('New link'));
+    await waitFor(tester, find.text('Link created and copied'));
     expect((await admin.shares()).map((s) => s.path), contains('/photos/'));
     final folderHash =
         (await Clipboard.getData('text/plain'))!.text!.split('/').last;
+    // Both public addresses of the folder work: its page and its archive.
+    for (final address in [
+      '$serverUrl/api/public/share/$folderHash',
+      '$serverUrl/api/public/dl/$folderHash?inline=true',
+    ]) {
+      final answer =
+          await HttpClient().getUrl(Uri.parse(address)).then((r) => r.close());
+      expect(answer.statusCode, 200, reason: address);
+      await answer.drain<void>();
+    }
     // Deleting the folder's only link leaves the form, which Cancel closes.
     await tap(tester, find.byTooltip('Delete link for $folderHash'));
     await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
