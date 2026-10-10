@@ -77,11 +77,7 @@ and are for development only.
    (`origin/master:.github/workflows/android-release.yml:1`) when the step is
    present and prints nothing when it is missing. Without the step a manual
    run only rebuilds an existing tag, so a release then still needs a pushed
-   `android-vX.Y.Z` tag. While the step is missing, the edited workflow is at
-   `filebrowser-android/docs/android-release.yml`; install it from the
-   repository root with
-   `git mv -f filebrowser-android/docs/android-release.yml .github/workflows/android-release.yml`
-   followed by a commit, and push that to `master`.
+   `android-vX.Y.Z` tag.
 5. The workflow then builds `armeabi-v7a`, `arm64-v8a` and `x86_64` APKs,
    checks they are not debug-signed and attaches them to the release.
 6. F-Droid picks the release up on its next six-hour run, or at once with
