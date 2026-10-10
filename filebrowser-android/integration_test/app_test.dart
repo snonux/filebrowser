@@ -488,6 +488,20 @@ void main() {
     await waitFor(tester, find.text(link));
     await tapText(tester, 'Close');
 
+    // A folder is shared under the path the web UI uses for it, with a
+    // trailing slash, so that both list the same links for it.
+    await itemAction(tester, 'photos', 'Share link');
+    await tapText(tester, 'Create link');
+    await waitFor(tester, find.text('New link'));
+    expect((await admin.shares()).map((s) => s.path), contains('/photos/'));
+    final folderHash =
+        (await Clipboard.getData('text/plain'))!.text!.split('/').last;
+    // Deleting the folder's only link leaves the form, which Cancel closes.
+    await tap(tester, find.byTooltip('Delete link for $folderHash'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await waitFor(tester, find.text('Create link'));
+    await tapText(tester, 'Cancel');
+
     await tap(tester, find.byTooltip('Open navigation menu'));
     await tapText(tester, 'Share links');
     await waitFor(tester, find.text('/readme.md'));

@@ -22,6 +22,15 @@ final _item = FileItem(
   type: 'pdf',
 );
 
+final _folder = FileItem(
+  path: '/docs/album',
+  name: 'album',
+  size: 0,
+  modified: DateTime(2026),
+  isDir: true,
+  type: '',
+);
+
 /// A scripted server that keeps share links like the real one does.
 class _ShareServer {
   _ShareServer([List<Map<String, dynamic>> links = const []])
@@ -31,6 +40,12 @@ class _ShareServer {
 
   /// When set, creating a link fails with this status.
   int? createStatus;
+
+  /// When set, listing the links fails with this status.
+  int? listStatus;
+
+  /// When set, deleting a link fails with this status.
+  int? deleteStatus;
   int _next = 1;
 
   late final adapter = FakeAdapter(_handle);
@@ -40,8 +55,11 @@ class _ShareServer {
 
   ResponseBody _handle(RequestOptions o) {
     final path = o.uri.path;
-    if (o.method == 'GET') return reply(200, body: links);
+    if (o.method == 'GET') {
+      return listStatus == null ? reply(200, body: links) : reply(listStatus!);
+    }
     if (o.method == 'DELETE') {
+      if (deleteStatus != null) return reply(deleteStatus!);
       links.removeWhere((l) => path.endsWith('/${l['hash']}'));
       return reply(200);
     }
@@ -70,15 +88,20 @@ Map<String, dynamic> _link(String hash,
 void main() {
   late List<String> clipboard;
 
+  /// Whether the platform refuses to copy.
+  late bool clipboardFails;
+
   /// Shows a screen with one button that opens the item's actions menu, for
   /// an account with [perm] on a server at `http://fb.local/base`.
   Future<void> pumpApp(WidgetTester tester, _ShareServer server,
-      {Permissions perm =
-          const Permissions(share: true, download: true)}) async {
+      {Permissions perm = const Permissions(share: true, download: true),
+      FileItem? item}) async {
     clipboard = [];
+    clipboardFails = false;
     tester.binding.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
       if (call.method == 'Clipboard.setData') {
+        if (clipboardFails) throw PlatformException(code: 'unavailable');
         clipboard.add((call.arguments as Map)['text'] as String);
       }
       return null;
@@ -96,7 +119,8 @@ void main() {
         home: Scaffold(
           body: Builder(
             builder: (context) => TextButton(
-              onPressed: () => FileActions(context).showMenu(context, _item),
+              onPressed: () =>
+                  FileActions(context).showMenu(context, item ?? _item),
               child: const Text('menu'),
             ),
           ),
@@ -280,6 +304,149 @@ void main() {
     expect(find.text('Create link'), findsOneWidget);
     await tap(tester, find.text('Cancel'));
     expect(find.text('http://fb.local/base/share/open'), findsOneWidget);
+    expect(server.requests('POST'), isEmpty);
+  });
+
+  testWidgets('a folder is listed and shared with a trailing slash',
+      (tester) async {
+    final server = _ShareServer();
+    await pumpApp(tester, server, item: _folder);
+    await openShare(tester);
+    await tap(tester, find.text('Create link'));
+    // The web UI addresses folders this way, and the server matches a
+    // non-admin's links by the exact path.
+    expect(server.adapter.requests.map((r) => '${r.method} ${r.uri}'), [
+      'GET http://fb.local/base/api/share/docs/album/',
+      'POST http://fb.local/base/api/share/docs/album/',
+    ]);
+  });
+
+  testWidgets('a link with a password is marked as protected', (tester) async {
+    final server = _ShareServer();
+    await pumpApp(tester, server);
+    await openShare(tester);
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password (optional)'), 'pw');
+    await tap(tester, find.text('Create link'));
+    expect(find.byIcon(Icons.lock), findsOneWidget);
+    expect(find.byTooltip('No download link for new1: it has a password'),
+        findsOneWidget);
+  });
+
+  testWidgets('a lifetime the server cannot add is reported per unit',
+      (tester) async {
+    final server = _ShareServer();
+    await pumpApp(tester, server);
+    await openShare(tester);
+    // 200000 hours are fine, 200000 days would wrap to a date in the past.
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Expires after'), '200000');
+    await tap(tester, find.text('hours'));
+    await tap(tester, find.text('days').last);
+    await tap(tester, find.text('Create link'));
+    expect(find.text('Enter a whole number from 0 to 106751'), findsOneWidget);
+    expect(server.requests('POST'), isEmpty);
+
+    await tap(tester, find.text('days'));
+    await tap(tester, find.text('hours').last);
+    await tap(tester, find.text('Create link'));
+    expect(postedBody(server), {
+      'password': '',
+      'expires': '200000',
+      'unit': 'hours',
+    });
+  });
+
+  testWidgets('a list that cannot be loaded is reported, then loaded again',
+      (tester) async {
+    final server = _ShareServer([_link('old')])..listStatus = 500;
+    await pumpApp(tester, server);
+    await openShare(tester);
+    // The form opens, saying that it is the list that is missing.
+    expect(find.textContaining('Could not load the existing links'),
+        findsOneWidget);
+    expect(find.text('Create link'), findsOneWidget);
+
+    server.listStatus = null;
+    await tap(tester, find.text('Create link'));
+    // The new link is not presented as the only one.
+    expect(server.requests('GET'), hasLength(2));
+    expect(find.text('http://fb.local/base/share/new1'), findsOneWidget);
+    expect(find.text('http://fb.local/base/share/old'), findsOneWidget);
+  });
+
+  testWidgets('a list that still cannot be loaded shows the new link',
+      (tester) async {
+    final server = _ShareServer()..listStatus = 403;
+    await pumpApp(tester, server);
+    await openShare(tester);
+    await tap(tester, find.text('Create link'));
+    expect(server.requests('GET'), hasLength(2));
+    expect(find.text('http://fb.local/base/share/new1'), findsOneWidget);
+    expect(find.text('New link'), findsOneWidget);
+  });
+
+  testWidgets('a failed copy still shows the link that was created',
+      (tester) async {
+    final server = _ShareServer();
+    await pumpApp(tester, server);
+    await openShare(tester);
+    clipboardFails = true;
+    await tap(tester, find.text('Create link'));
+    expect(server.links, hasLength(1));
+    expect(find.text('http://fb.local/base/share/new1'), findsOneWidget);
+    expect(
+        find.text('Link created, but it could not be copied'), findsOneWidget);
+    expect(find.text('Link created and copied'), findsNothing);
+
+    await tap(tester, find.byTooltip('Copy link for new1'));
+    expect(find.text('Could not copy the link'), findsOneWidget);
+    expect(find.text('Link copied'), findsNothing);
+    expect(clipboard, isEmpty);
+  });
+
+  testWidgets('a link that is already gone disappears after a failed delete',
+      (tester) async {
+    final server = _ShareServer([_link('gone'), _link('open')]);
+    await pumpApp(tester, server);
+    await openShare(tester);
+    // It expired on the server while the dialog was open.
+    server.links.removeWhere((l) => l['hash'] == 'gone');
+    server.deleteStatus = 404;
+    await tap(tester, find.byTooltip('Delete link for gone'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    expect(server.requests('DELETE'), hasLength(1));
+    expect(server.requests('GET'), hasLength(2));
+    expect(find.text('http://fb.local/base/share/gone'), findsNothing);
+    expect(find.text('http://fb.local/base/share/open'), findsOneWidget);
+  });
+
+  testWidgets('a delete the server refuses keeps the link', (tester) async {
+    final server = _ShareServer([_link('open')])..deleteStatus = 500;
+    await pumpApp(tester, server);
+    await openShare(tester);
+    await tap(tester, find.byTooltip('Delete link for open'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    expect(server.links, hasLength(1));
+    expect(find.text('http://fb.local/base/share/open'), findsOneWidget);
+    // The button works again for another try.
+    expect(
+        tester
+            .widget<IconButton>(find.ancestor(
+                of: find.byTooltip('Delete link for open'),
+                matching: find.byType(IconButton)))
+            .onPressed,
+        isNotNull);
+  });
+
+  testWidgets('cancelling the form of an item without links closes the dialog',
+      (tester) async {
+    final server = _ShareServer();
+    await pumpApp(tester, server);
+    await openShare(tester);
+    await tap(tester, find.text('Cancel'));
+    expect(find.text('Create link'), findsNothing);
+    expect(find.text('menu'), findsOneWidget);
     expect(server.requests('POST'), isEmpty);
   });
 

@@ -54,20 +54,45 @@ void main() {
     expect(parseShareExpiry('2147483647'), 2147483647);
   });
 
+  test('parseShareExpiry ignores surrounding whitespace and leading zeros', () {
+    expect(parseShareExpiry('007'), 7);
+    expect(parseShareExpiry('\t12\n'), 12);
+  });
+
   test('parseShareExpiry rejects anything else', () {
     for (final bad in [
       '-1',
       '+3',
       '1.5',
       '1,5',
+      '1 2',
       '3 days',
       'abc',
       '0x10',
+      // Arabic-Indic digits: the server only reads ASCII ones.
+      '\u0661\u0662',
       '2147483648',
       '99999999999999999999999',
     ]) {
       expect(parseShareExpiry(bad), isNull, reason: bad);
     }
+  });
+
+  test('parseShareExpiry limits each unit to what the server can add', () {
+    const longest = {
+      'seconds': 2147483647,
+      'minutes': 153722867,
+      'hours': 2562047,
+      'days': 106751,
+    };
+    for (final MapEntry(key: unit, value: max) in longest.entries) {
+      expect(maxShareExpiryFor(unit), max, reason: unit);
+      expect(parseShareExpiry('$max', unit), max, reason: unit);
+      expect(parseShareExpiry('${max + 1}', unit), isNull, reason: unit);
+    }
+    // 200000 days would wrap around to a date in the past.
+    expect(parseShareExpiry('200000', 'days'), isNull);
+    expect(parseShareExpiry('200000', 'hours'), 200000);
   });
 
   test('sortShareLinks puts permanent links first, then soonest expiry', () {
@@ -76,6 +101,23 @@ void main() {
     final sorted = sortShareLinks(
         [link('late', 900), link('never', 0), link('soon', 100)]);
     expect(sorted.map((l) => l.hash), ['never', 'soon', 'late']);
+  });
+
+  test('sortShareLinks groups ties and leaves its input alone', () {
+    ShareLink link(String hash, int expire) =>
+        ShareLink(hash: hash, path: '/f', expire: expire);
+    final input = [
+      link('b', 100),
+      link('never2', 0),
+      link('a', 100),
+      link('never1', 0),
+    ];
+    final sorted = sortShareLinks(input);
+    expect(sorted.map((l) => l.hash).toSet(), {'never2', 'never1', 'b', 'a'});
+    expect(sorted.take(2).every((l) => l.expire == 0), isTrue);
+    expect(sorted.skip(2).every((l) => l.expire == 100), isTrue);
+    expect(input.map((l) => l.hash), ['b', 'never2', 'a', 'never1']);
+    expect(sortShareLinks(const []), isEmpty);
   });
 
   test('sharing needs both the share and the download permission', () {

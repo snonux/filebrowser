@@ -196,14 +196,70 @@ void main() {
       }
     });
 
-    test('createShare refuses bad options without calling the server', () {
+    test('createShare refuses bad options without calling the server',
+        () async {
       api = build((_) => reply(200, body: link))..token = 'a.b.c';
-      expect(() => api.createShare('/f', expires: -1), throwsArgumentError);
-      expect(() => api.createShare('/f', expires: 2147483648),
+      // The refusal arrives through the future, like every other failure.
+      await expectLater(
+          api.createShare('/f', expires: -1), throwsArgumentError);
+      await expectLater(
+          api.createShare('/f', expires: 2147483648, unit: 'seconds'),
           throwsArgumentError);
-      expect(() => api.createShare('/f', expires: 1, unit: 'weeks'),
+      await expectLater(api.createShare('/f', expires: 1, unit: 'weeks'),
           throwsArgumentError);
       expect(adapter.requests, isEmpty);
+    });
+
+    test('createShare refuses a lifetime the server would overflow on',
+        () async {
+      const longest = {
+        'seconds': 2147483647,
+        'minutes': 153722867,
+        'hours': 2562047,
+        'days': 106751,
+      };
+      for (final MapEntry(key: unit, value: max) in longest.entries) {
+        api = build((_) => reply(200, body: link))..token = 'a.b.c';
+        // The longest lifetime still fits the server's 64-bit nanoseconds.
+        final seconds = max *
+            const {
+              'seconds': 1,
+              'minutes': 60,
+              'hours': 3600,
+              'days': 86400
+            }[unit]!;
+        expect(seconds, lessThanOrEqualTo(9223372036), reason: unit);
+        await api.createShare('/f', expires: max, unit: unit);
+        expect(sentBody()['expires'], '$max', reason: unit);
+        if (unit == 'seconds') continue;
+        await expectLater(api.createShare('/f', expires: max + 1, unit: unit),
+            throwsArgumentError,
+            reason: unit);
+        expect(adapter.requests, hasLength(1), reason: unit);
+      }
+    });
+
+    test('a folder is addressed with a trailing slash, as the web UI does',
+        () async {
+      api = build((o) => reply(200, body: o.method == 'GET' ? [link] : link))
+        ..token = 'a.b.c';
+      await api.sharesFor('/a dir/sub', isDir: true);
+      await api.createShare('/a dir/sub/', isDir: true);
+      await api.sharesFor('/', isDir: true);
+      expect(adapter.requests.map((r) => '${r.method} ${r.uri}'), [
+        'GET http://fb.local/base/api/share/a%20dir/sub/',
+        'POST http://fb.local/base/api/share/a%20dir/sub/',
+        'GET http://fb.local/base/api/share/',
+      ]);
+    });
+
+    test('a file is addressed without a trailing slash', () async {
+      api = build((o) => reply(200, body: o.method == 'GET' ? [link] : link))
+        ..token = 'a.b.c';
+      await api.sharesFor('/a dir/f/');
+      await api.createShare('/a dir/f/');
+      expect(adapter.requests.map((r) => r.uri.toString()).toSet(),
+          {'http://fb.local/base/api/share/a%20dir/f'});
     });
 
     test('createShare reports a missing share permission', () async {
@@ -277,11 +333,39 @@ void main() {
           'http://fb.local/base/api/users');
     });
 
+    test('usernames leaves out entries without an id or a name', () async {
+      api = build((_) => reply(200, body: [
+            {'username': 'no-id'},
+            {'id': 0, 'username': 'zero'},
+            {'id': 3, 'username': ''},
+            {'id': 4},
+            {'id': 7, 'username': 'bob'}
+          ]))
+        ..token = 'a.b.c';
+      expect(await api.usernames(), {7: 'bob'});
+    });
+
+    test('usernames reports that only administrators may list users', () async {
+      api = build((_) => reply(403))..token = 'a.b.c';
+      expect(
+          () => api.usernames(),
+          throwsA(isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 403)));
+    });
+
     test('links point at the configured address, base path included', () {
       final share = ShareLink.fromJson(link);
       api = build((_) => reply(200));
       expect(api.shareUrl(share), 'http://fb.local/base/share/h1');
       expect(api.shareDownloadUrl(share),
+          'http://fb.local/base/api/public/dl/h1?inline=true');
+    });
+
+    test('links for an address entered with several trailing slashes', () {
+      final share = ShareLink.fromJson(link);
+      final slashes = FileBrowserApi(baseUrl: 'http://fb.local/base///');
+      expect(slashes.shareUrl(share), 'http://fb.local/base/share/h1');
+      expect(slashes.shareDownloadUrl(share),
           'http://fb.local/base/api/public/dl/h1?inline=true');
     });
 
