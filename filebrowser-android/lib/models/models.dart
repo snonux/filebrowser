@@ -44,6 +44,9 @@ class FileItem {
 
   bool get isImage => type == 'image';
   bool get isText => type == 'text' || type == 'textImmutable';
+  bool get isPdf => type == 'pdf';
+  bool get isVideo => type == 'video';
+  bool get isAudio => type == 'audio';
   bool get isHidden => name.startsWith('.');
 }
 

@@ -60,6 +60,35 @@ def png(path, rgb):
 png(sys.argv[1] + "/red.png", (220, 30, 30))
 png(sys.argv[1] + "/blue.png", (30, 30, 220))
 PY
+mkdir -p "$root/media"
+python3 - "$root/media" <<'PY'
+import math, struct, sys, wave
+# A two-page PDF with one line of text per page.
+objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>"]
+for page in (1, 2):
+    objs.append(b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] "
+                b"/Resources << /Font << /F1 7 0 R >> >> /Contents %d 0 R >>" % (4 + page))
+for page in (1, 2):
+    text = b"BT /F1 24 Tf 40 340 Td (Page %d) Tj ET" % page
+    objs.append(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(text), text))
+objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+pdf = b"%PDF-1.4\n"
+offsets = []
+for i, obj in enumerate(objs, 1):
+    offsets.append(len(pdf))
+    pdf += b"%d 0 obj\n%s\nendobj\n" % (i, obj)
+xref = len(pdf)
+pdf += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+pdf += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+pdf += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+open(sys.argv[1] + "/guide.pdf", "wb").write(pdf)
+# Two seconds of a 440 Hz tone.
+with wave.open(sys.argv[1] + "/tone.wav", "wb") as w:
+    w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+    w.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * i / 8000)))
+                           for i in range(16000)))
+PY
 
 db="$WORK/fb.db"
 fb() { "$WORK/filebrowser" -d "$db" "$@" >/dev/null; }

@@ -95,13 +95,21 @@ class FileActions {
   void _refresh(String dir) =>
       ref.invalidate(resourceProvider(normalizePath(dir)));
 
-  /// Opens a folder, image or text file in the app; anything else is
-  /// downloaded and handed to another app.
+  /// Whether [open] shows the file in the app rather than another app.
+  static bool opensInApp(FileItem item) =>
+      item.isImage || item.isPdf || item.isVideo || item.isAudio || item.isText;
+
+  /// Opens a folder, image, PDF, video, audio or text file in the app;
+  /// anything else is downloaded and handed to another app.
   Future<void> open(BuildContext context, FileItem item) async {
     if (item.isDir) {
       context.push(AppRoutes.files(item.path));
     } else if (item.isImage) {
       context.push(AppRoutes.view(item.path));
+    } else if (item.isPdf) {
+      context.push(AppRoutes.pdf(item.path));
+    } else if (item.isVideo || item.isAudio) {
+      context.push(AppRoutes.play(item.path));
     } else if (item.isText) {
       context.push(AppRoutes.edit(item.path));
     } else {
@@ -348,6 +356,9 @@ class FileActions {
                     : '${formatSize(item.size)} · ${formatDate(item.modified)}'),
               ),
               tile(Icons.open_in_new, 'Open', () => open(context, item)),
+              if (perm.download && opensInApp(item))
+                tile(Icons.open_in_browser, 'Open with another app',
+                    () => download(item, openWhenDone: true)),
               if (perm.download)
                 tile(
                     Icons.download,

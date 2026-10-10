@@ -1,1 +1,1 @@
-First release: browse, upload, download, edit, share and manage files on a File Browser server.
+PDF viewer, video and audio player, and "Open with another app" in the file menu.

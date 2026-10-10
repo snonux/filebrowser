@@ -307,6 +307,24 @@ class FileBrowserApi {
         );
       });
 
+  /// Fetches a file's raw bytes into memory, for viewers such as the PDF
+  /// viewer. Goes through Dio, so an expired session is renewed on the way.
+  Future<Uint8List> readBytes(
+    String path, {
+    void Function(int received, int total)? onProgress,
+    CancelToken? cancelToken,
+  }) =>
+      _call(() async {
+        final res = await _dio.get<List<int>>(
+          rawUrl(path),
+          options: Options(responseType: ResponseType.bytes),
+          onReceiveProgress: onProgress,
+          cancelToken: cancelToken,
+        );
+        final data = res.data ?? const <int>[];
+        return data is Uint8List ? data : Uint8List.fromList(data);
+      });
+
   // ---------------------------------------------------------------------------
   // Shares
   // ---------------------------------------------------------------------------

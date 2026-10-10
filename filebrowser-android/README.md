@@ -20,9 +20,13 @@ The installed app version appears at the bottom of **Settings**.
   sorting by name, size or date (folders first), and a toggle for hidden
   files. The drawer on the first screen shows the disk usage.
 - **Open** a folder, an image (full-screen viewer that swipes through the
-  folder's images and pinch-zooms), or a text file (editor; saving needs the
-  modify permission). Any other file is downloaded and handed to the app
-  Android picks for it.
+  folder's images and pinch-zooms), a PDF (scrolling pages with pinch zoom
+  and a page counter, rendered with PDFium), a video or audio file (streamed
+  player with seeking), or a text file (editor; saving needs the modify
+  permission). Any other file is downloaded and handed to the app Android
+  picks for it. **Open with another app** in a file's ⋮ menu does the same
+  for files the app can show itself, and the PDF viewer and player offer it
+  when they cannot show a file.
 - **Upload** any number of files picked with Android's file picker. Uploads
   use the tus protocol in 10 MB chunks and resume from the server's offset
   after a failed chunk. Uploading over an existing name asks before replacing.
