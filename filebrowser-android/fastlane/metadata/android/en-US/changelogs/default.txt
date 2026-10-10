@@ -1,1 +1,1 @@
-First release: browse, upload, download, edit, share and manage files on a File Browser server.
+Sharing now works like in the web interface: see the links a file or folder already has, copy a link or a direct download link, delete links, and set a lifetime in seconds, minutes, hours or days with an optional password. Folder links are shared with the web interface, and administrators see whose link each one is.
