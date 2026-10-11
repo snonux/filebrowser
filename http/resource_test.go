@@ -257,3 +257,178 @@ func TestResourcePostRunsUploadHooksForDirectories(t *testing.T) {
 		t.Fatalf("expected directory to be created before its after hook, got %v", err)
 	}
 }
+
+func TestResourceCopyRejectsSameFile(t *testing.T) {
+	for _, kind := range []string{"identical", "symlink", "hardlink", "distinct"} {
+		t.Run(kind, func(t *testing.T) {
+			scope := t.TempDir()
+			source, dest := filepath.Join(scope, "source.txt"), filepath.Join(scope, "alias.txt")
+			if err := os.WriteFile(source, []byte("preserve source"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			destination := "/alias.txt"
+			switch kind {
+			case "identical":
+				dest, destination = source, "/source.txt"
+			case "symlink":
+				if err := os.Symlink(source, dest); err != nil {
+					t.Fatal(err)
+				}
+			case "hardlink":
+				if err := os.Link(source, dest); err != nil {
+					t.Fatal(err)
+				}
+			case "distinct":
+				if err := os.WriteFile(dest, []byte("long old destination content"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			key := []byte("same-file-test-key")
+			perm := users.Permissions{Create: true, Modify: true}
+			st := scopedUserStorage(t, scope, perm, key)
+			req := httptest.NewRequest(http.MethodPatch, "/source.txt", http.NoBody)
+			query := req.URL.Query()
+			query.Set("action", "copy")
+			query.Set("destination", destination)
+			query.Set("override", "true")
+			req.URL.RawQuery = query.Encode()
+			req.Header.Set("X-Auth", signToken(t, perm, key))
+			rec := httptest.NewRecorder()
+			handle(resourcePatchHandler(diskcache.NewNoOp()), "", st, &settings.Server{}).ServeHTTP(rec, req)
+			wantStatus := http.StatusBadRequest
+			if kind == "distinct" {
+				wantStatus = http.StatusOK
+			}
+			if rec.Code != wantStatus {
+				t.Fatalf("status=%d want=%d body=%q", rec.Code, wantStatus, rec.Body.String())
+			}
+			for _, name := range []string{source, dest} {
+				data, err := os.ReadFile(name)
+				if err != nil || string(data) != "preserve source" {
+					t.Fatalf("%s changed: %q, %v", name, data, err)
+				}
+			}
+		})
+	}
+}
+
+func TestResourceRenameCaseOnly(t *testing.T) {
+	scope := t.TempDir()
+	source, dest := filepath.Join(scope, "source.txt"), filepath.Join(scope, "SOURCE.txt")
+	if err := os.WriteFile(source, []byte("preserve source"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key := []byte("case-rename-test-key")
+	// Case-only rename needs Rename permission, without needing overwrite permission.
+	perm := users.Permissions{Rename: true}
+	st := scopedUserStorage(t, scope, perm, key)
+	req := httptest.NewRequest(http.MethodPatch, "/source.txt?action=rename&destination=/SOURCE.txt", http.NoBody)
+	req.Header.Set("X-Auth", signToken(t, perm, key))
+	rec := httptest.NewRecorder()
+	handle(resourcePatchHandler(diskcache.NewNoOp()), "", st, &settings.Server{}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil || string(data) != "preserve source" {
+		t.Fatalf("unexpected renamed content: %q, %v", data, err)
+	}
+	entries, err := os.ReadDir(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "SOURCE.txt" {
+		t.Fatalf("case-only rename did not update name: %v", entries)
+	}
+}
+
+// Two names for one inode exercise the same-identity rename exception even on
+// a case-sensitive filesystem; case-only renames use this branch on other hosts.
+func TestResourceRenameSameIdentity(t *testing.T) {
+	scope := t.TempDir()
+	source, dest := filepath.Join(scope, "source.txt"), filepath.Join(scope, "SOURCE.txt")
+	if err := os.WriteFile(source, []byte("preserve source"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(source, dest); err != nil {
+		t.Fatal(err)
+	}
+	key := []byte("same-identity-rename-key")
+	perm := users.Permissions{Rename: true}
+	st := scopedUserStorage(t, scope, perm, key)
+	req := httptest.NewRequest(http.MethodPatch, "/source.txt?action=rename&destination=/SOURCE.txt", http.NoBody)
+	req.Header.Set("X-Auth", signToken(t, perm, key))
+	rec := httptest.NewRecorder()
+	handle(resourcePatchHandler(diskcache.NewNoOp()), "", st, &settings.Server{}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil || string(data) != "preserve source" {
+		t.Fatalf("unexpected renamed content: %q, %v", data, err)
+	}
+}
+
+func TestResourceCopySameFileKeepBoth(t *testing.T) {
+	for _, kind := range []string{"identical", "symlink", "hardlink"} {
+		t.Run(kind, func(t *testing.T) {
+			scope := t.TempDir()
+			source, dest := filepath.Join(scope, "source.txt"), filepath.Join(scope, "alias.txt")
+			destination, version := "/alias.txt", "alias(1).txt"
+			if err := os.WriteFile(source, []byte("preserve source"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "identical":
+				dest, destination, version = source, "/source.txt", "source(1).txt"
+			case "symlink":
+				if err := os.Symlink(source, dest); err != nil {
+					t.Fatal(err)
+				}
+			case "hardlink":
+				if err := os.Link(source, dest); err != nil {
+					t.Fatal(err)
+				}
+			}
+			key := []byte("same-file-keep-both-key")
+			// Creating a versioned copy does not require permission to modify the source.
+			perm := users.Permissions{Create: true}
+			st := scopedUserStorage(t, scope, perm, key)
+			req := httptest.NewRequest(http.MethodPatch, "/source.txt", http.NoBody)
+			query := req.URL.Query()
+			query.Set("action", "copy")
+			query.Set("destination", destination)
+			req.URL.RawQuery = query.Encode()
+			req.Header.Set("X-Auth", signToken(t, perm, key))
+			rec := httptest.NewRecorder()
+			handle(resourcePatchHandler(diskcache.NewNoOp()), "", st, &settings.Server{}).ServeHTTP(rec, req)
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("expected conflict before choosing keep-both, status=%d body=%q", rec.Code, rec.Body.String())
+			}
+			query.Set("rename", "true")
+			req.URL.RawQuery = query.Encode()
+			rec = httptest.NewRecorder()
+			handle(resourcePatchHandler(diskcache.NewNoOp()), "", st, &settings.Server{}).ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+			}
+			for _, name := range []string{source, dest, filepath.Join(scope, version)} {
+				data, err := os.ReadFile(name)
+				if err != nil || string(data) != "preserve source" {
+					t.Fatalf("%s content=%q err=%v", name, data, err)
+				}
+			}
+			sourceInfo, err := os.Stat(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			copyInfo, err := os.Stat(filepath.Join(scope, version))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if os.SameFile(sourceInfo, copyInfo) {
+				t.Fatal("versioned copy aliases the source")
+			}
+		})
+	}
+}

@@ -1,6 +1,7 @@
 package fileutils
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -10,6 +11,9 @@ import (
 	"github.com/spf13/afero"
 )
 
+// ErrSameFile means the source and destination identify the same file.
+var ErrSameFile = errors.New("source and destination are the same file")
+
 // MoveFile moves file from src to dst.
 // By default the rename filesystem system call is used. If src and dst point to different volumes
 // the file copy is used as a fallback
@@ -17,10 +21,25 @@ func MoveFile(afs afero.Fs, src, dst string, fileMode, dirMode fs.FileMode) erro
 	if afs.Rename(src, dst) == nil {
 		return nil
 	}
-	// fallback
-	err := Copy(afs, src, dst, fileMode, dirMode)
+	// A failed rename must not fall back to copying or cleaning up an alias
+	// of the source. Successful renames still support case-only name changes.
+	srcInfo, err := afs.Stat(src)
 	if err != nil {
-		_ = afs.Remove(dst)
+		return err
+	}
+	dstInfo, err := afs.Stat(dst)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if filepath.Clean(src) == filepath.Clean(dst) || os.SameFile(srcInfo, dstInfo) {
+		return ErrSameFile
+	}
+	// fallback
+	err = Copy(afs, src, dst, fileMode, dirMode)
+	if err != nil {
+		if !errors.Is(err, ErrSameFile) {
+			_ = afs.Remove(dst)
+		}
 		return err
 	}
 	if err := afs.RemoveAll(src); err != nil {
@@ -32,12 +51,19 @@ func MoveFile(afs afero.Fs, src, dst string, fileMode, dirMode fs.FileMode) erro
 // CopyFile copies a file from source to dest and returns
 // an error if any.
 func CopyFile(afs afero.Fs, source, dest string, fileMode, dirMode fs.FileMode) error {
+	if filepath.Clean(source) == filepath.Clean(dest) {
+		return ErrSameFile
+	}
 	// Open the source file.
 	src, err := afs.Open(source)
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
+	info, err := src.Stat()
+	if err != nil {
+		return err
+	}
 
 	// Makes the directory needed to create the dst
 	// file.
@@ -46,12 +72,23 @@ func CopyFile(afs afero.Fs, source, dest string, fileMode, dirMode fs.FileMode) 
 		return err
 	}
 
-	// Create the destination file.
-	dst, err := afs.OpenFile(dest, os.O_RDWR|os.O_CREATE|os.O_TRUNC, fileMode)
+	// Open without truncation so identity is checked on the actual handles,
+	// even if the destination changes between a path stat and this open.
+	dst, err := afs.OpenFile(dest, os.O_RDWR|os.O_CREATE, fileMode)
 	if err != nil {
 		return err
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
+	dstInfo, err := dst.Stat()
+	if err != nil {
+		return err
+	}
+	if os.SameFile(info, dstInfo) {
+		return ErrSameFile
+	}
+	if err := dst.Truncate(0); err != nil {
+		return err
+	}
 
 	// Copy the contents of the file.
 	_, err = io.Copy(dst, src)
@@ -60,10 +97,6 @@ func CopyFile(afs afero.Fs, source, dest string, fileMode, dirMode fs.FileMode) 
 	}
 
 	// Copy the mode
-	info, err := afs.Stat(source)
-	if err != nil {
-		return err
-	}
 	err = afs.Chmod(dest, info.Mode())
 	if err != nil {
 		return err

@@ -275,6 +275,15 @@ func resourcePatchHandler(fileCache FileCache) handleFunc {
 			}
 		}
 
+		// Compare the final destination: keep-both copies first choose a new
+		// versioned path, while overwriting an alias must preserve the source.
+		if action == "copy" {
+			dstInfo, _ = d.user.Fs.Stat(dst)
+			if src == dst || os.SameFile(srcInfo, dstInfo) {
+				return http.StatusBadRequest, fileutils.ErrSameFile
+			}
+		}
+
 		if err = checkDescendants(d, src, dst); err != nil {
 			return errToStatus(err), err
 		}
