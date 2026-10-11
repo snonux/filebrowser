@@ -7,19 +7,12 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/gorilla/mux"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 
 	"github.com/filebrowser/filebrowser/v2/auth"
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/users"
-)
-
-var (
-	NonModifiableFieldsForNonAdmin = []string{"Username", "Scope", "LockPassword", "Perm", "Commands", "Rules"}
 )
 
 type modifyUserRequest struct {
@@ -177,93 +170,50 @@ var userPostHandler = withAdmin(func(w http.ResponseWriter, r *http.Request, d *
 	return http.StatusCreated, nil
 })
 
-var userPutHandler = withSelfOrAdmin(func(w http.ResponseWriter, r *http.Request, d *data) (int, error) {
-	req, err := getUser(w, r)
+var userPutHandler = withSelfOrAdmin(updateUser)
+
+func updateUser(_ http.ResponseWriter, r *http.Request, d *data) (int, error) {
+	if r.Body == nil {
+		return http.StatusBadRequest, fberrors.ErrEmptyRequest
+	}
+	var req struct {
+		modifyRequest
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return http.StatusBadRequest, err
+	}
+	if req.What != "user" {
+		return http.StatusBadRequest, fberrors.ErrInvalidDataType
+	}
+	id, patch, full, err := users.DecodePatch(req.Data, req.Which)
 	if err != nil {
 		return http.StatusBadRequest, err
 	}
-
-	if d.settings.AuthMethod == auth.MethodJSONAuth {
-		var sensibleFields = map[string]struct{}{
-			"all":          {},
-			"username":     {},
-			"password":     {},
-			"scope":        {},
-			"lockPassword": {},
-			"commands":     {},
-			"perm":         {},
-		}
-
-		for _, field := range req.Which {
-			if _, ok := sensibleFields[strings.ToLower(field)]; ok {
-				if !users.CheckPwd(req.CurrentPassword, d.user.Password) {
-					return http.StatusBadRequest, fberrors.ErrCurrentPasswordIncorrect
-				}
-				break
-			}
-		}
+	if id != d.raw.(uint) {
+		return http.StatusBadRequest, fberrors.ErrInvalidDataType
 	}
-
-	if req.Data.ID != d.raw.(uint) {
-		return http.StatusBadRequest, nil
-	}
-
-	for _, field := range req.Which {
-		if strings.ToLower(field) == "perm" || strings.ToLower(field) == "all" {
-			if req.Data.Perm.Share && !req.Data.Perm.Download {
-				return http.StatusBadRequest, fberrors.ErrShareRequiresDownload
-			}
-		}
-	}
-
-	if len(req.Which) == 0 || (len(req.Which) == 1 && req.Which[0] == "all") {
-		if !d.user.Perm.Admin {
-			return http.StatusForbidden, nil
-		}
-
-		if req.Data.Password != "" {
-			req.Data.Password, err = users.ValidateAndHashPwd(req.Data.Password, d.settings.MinimumPasswordLength)
-			if err != nil {
-				return http.StatusBadRequest, err
-			}
-		} else {
-			var suser *users.User
-			suser, err = d.store.Users.Get(d.server.Root, d.server.FollowExternalSymlinks, d.raw.(uint))
-			if err != nil {
-				return http.StatusInternalServerError, err
-			}
-			req.Data.Password = suser.Password
-		}
-
-		req.Which = []string{}
-	}
-
-	for k, v := range req.Which {
-		v = cases.Title(language.English, cases.NoLower).String(v)
-		req.Which[k] = v
-
-		if v == "Password" {
-			if !d.user.Perm.Admin && d.user.LockPassword {
-				return http.StatusForbidden, nil
-			}
-
-			req.Data.Password, err = users.ValidateAndHashPwd(req.Data.Password, d.settings.MinimumPasswordLength)
-			if err != nil {
-				return http.StatusBadRequest, err
-			}
-		}
-
-		for _, f := range NonModifiableFieldsForNonAdmin {
-			if !d.user.Perm.Admin && v == f {
-				return http.StatusForbidden, nil
-			}
-		}
-	}
-
-	err = d.store.Users.Update(req.Data, req.Which...)
+	current, err := d.store.Users.Get(d.server.Root, d.server.FollowExternalSymlinks, id)
 	if err != nil {
-		return http.StatusInternalServerError, err
+		return errToStatus(err), err
 	}
-
+	merged, prepared, err := patch.Prepare(*current, full, users.PatchPolicy{
+		Actor:                  d.user,
+		RequireCurrentPassword: d.settings.AuthMethod == auth.MethodJSONAuth,
+		CurrentPassword:        req.CurrentPassword,
+		MinimumPasswordLength:  d.settings.MinimumPasswordLength,
+	})
+	if errors.Is(err, users.ErrForbiddenPatch) {
+		return http.StatusForbidden, err
+	}
+	if err != nil {
+		return http.StatusBadRequest, err
+	}
+	if len(prepared.Fields()) == 0 {
+		return http.StatusOK, nil
+	}
+	if err := d.store.Users.Update(&merged, prepared.Fields()...); err != nil {
+		return errToStatus(err), err
+	}
 	return http.StatusOK, nil
-})
+}

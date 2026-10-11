@@ -2,7 +2,6 @@ package bolt
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 	"regexp"
 
@@ -75,22 +74,28 @@ func (st usersBackend) Gets() ([]*users.User, error) {
 }
 
 func (st usersBackend) Update(user *users.User, fields ...string) error {
-	if len(fields) == 0 {
-		return st.Save(user)
+	patch, err := users.PatchFromUser(user, fields...)
+	if err != nil {
+		return err
 	}
-
-	for _, field := range fields {
-		userField := reflect.ValueOf(user).Elem().FieldByName(field)
-		if !userField.IsValid() {
-			return fmt.Errorf("invalid field: %s", field)
-		}
-		val := userField.Interface()
-		if err := st.db.UpdateField(user, field, val); err != nil {
+	return st.db.Bolt.Update(func(tx *bolt.Tx) error {
+		node := st.db.WithTransaction(tx)
+		var current users.User
+		if err := node.One("ID", user.ID, &current); err != nil {
+			if errors.Is(err, storm.ErrNotFound) {
+				return fberrors.ErrNotExist
+			}
 			return err
 		}
-	}
-
-	return nil
+		merged := patch.Merge(current)
+		if err := node.Save(&merged); err != nil {
+			if errors.Is(err, storm.ErrAlreadyExists) {
+				return fberrors.ErrExist
+			}
+			return err
+		}
+		return nil
+	})
 }
 
 func (st usersBackend) Save(user *users.User) error {

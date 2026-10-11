@@ -89,12 +89,17 @@ func (s *Storage) Gets(baseScope string, followExternalSymlinks bool) ([]*User, 
 
 // Update updates a user in the database.
 func (s *Storage) Update(user *User, fields ...string) error {
-	err := user.Clean("", false, fields...)
+	patch, err := PatchFromUser(user, fields...)
 	if err != nil {
 		return err
 	}
+	// Validate a copy so a rejected update cannot change a caller's cached user.
+	merged := patch.Merge(*user)
+	if err := merged.Clean("", false, patch.Fields()...); err != nil {
+		return err
+	}
 
-	err = s.back.Update(user, fields...)
+	err = s.back.Update(&merged, fields...)
 	if err != nil {
 		return err
 	}
