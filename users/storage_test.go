@@ -2,12 +2,15 @@ package users
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
+	"github.com/spf13/afero"
 )
 
 // Interface is implemented by storage
@@ -113,5 +116,146 @@ func TestSaveProvisionedAllowsSharedExplicitScope(t *testing.T) {
 
 	if len(back.users) != 2 {
 		t.Fatalf("%d users stored, want 2", len(back.users))
+	}
+}
+
+// validationBackend captures writes and returns copies, as a persisted backend
+// does, so runtime binding cannot accidentally be reused by a later read.
+type validationBackend struct {
+	slowBackend
+	stored User
+}
+
+func (b *validationBackend) Save(u *User) error {
+	b.stored = *u
+	return nil
+}
+
+func (b *validationBackend) Update(u *User, _ ...string) error {
+	b.stored = *u
+	return nil
+}
+
+func (b *validationBackend) GetBy(interface{}) (*User, error) {
+	u := b.stored
+	return &u, nil
+}
+
+func (b *validationBackend) Gets() ([]*User, error) {
+	u := b.stored
+	return []*User{&u}, nil
+}
+
+func TestStorageWritesOnlyValidate(t *testing.T) {
+	back := &validationBackend{}
+	store := NewStorageWithFilesystem(back, nil) // Writes never need a source.
+	u := &User{ID: 7, Username: "u", Password: "p", Scope: "/missing"}
+	if err := store.Save(u); err != nil {
+		t.Fatal(err)
+	}
+	if u.Fs != nil || back.stored.Fs != nil || back.stored.ViewMode != ListViewMode {
+		t.Fatalf("save initialized filesystem or missed defaults: %+v", back.stored)
+	}
+	u.ViewMode = ""
+	if err := store.Update(u, "ViewMode"); err != nil {
+		t.Fatal(err)
+	}
+	if u.Fs != nil || u.ViewMode != "" || back.stored.Fs != nil || back.stored.ViewMode != ListViewMode {
+		t.Fatalf("update changed caller or initialized filesystem: %+v", back.stored)
+	}
+}
+
+func TestStorageReadsBindInjectedFilesystem(t *testing.T) {
+	source := afero.NewMemMapFs()
+	if err := source.MkdirAll("/server/data", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := afero.WriteFile(source, "/server/data/file", []byte("injected"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	back := &validationBackend{stored: User{Username: "u", Password: "p", Scope: "data"}}
+	store := NewStorageWithFilesystem(back, source)
+	u, err := store.Get("/server", true, "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.Gets("/server", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, user := range append(all, u) {
+		got, err := afero.ReadFile(user.Fs, "/file")
+		if err != nil || string(got) != "injected" {
+			t.Fatalf("runtime read ignored injected source: %q, %v", got, err)
+		}
+	}
+	if back.stored.Fs != nil {
+		t.Fatal("read changed persisted user filesystem")
+	}
+}
+
+func TestStorageReadValidationFailureDoesNotBind(t *testing.T) {
+	back := &validationBackend{stored: User{Password: "p"}}
+	store := NewStorageWithFilesystem(back, nil)
+	if _, err := store.Get("/server", false, "u"); !errors.Is(err, fberrors.ErrEmptyUsername) {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, err := store.Gets("/server", false); !errors.Is(err, fberrors.ErrEmptyUsername) {
+		t.Fatalf("Gets: %v", err)
+	}
+}
+
+func TestStorageReadPreservesExistingRuntimeFilesystem(t *testing.T) {
+	existing := afero.NewMemMapFs()
+	back := &validationBackend{stored: User{Username: "u", Password: "p", Fs: existing}}
+	store := NewStorageWithFilesystem(back, nil)
+	u, err := store.Get("/server", false, "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Fs != existing {
+		t.Fatal("read replaced an already bound filesystem")
+	}
+}
+
+func TestStorageReadsOSFilesystemPolicy(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "outside"), []byte("external"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "outside"), filepath.Join(root, "data", "link")); err != nil {
+		t.Fatal(err)
+	}
+	back := &validationBackend{stored: User{Username: "u", Password: "p", Scope: "data"}}
+	for _, store := range []*Storage{NewStorage(back), NewStorageWithFilesystem(back, afero.NewOsFs())} {
+		for _, follow := range []bool{false, true} {
+			u, err := store.Get(root, follow, "u")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := afero.ReadFile(u.Fs, "/link")
+			if follow {
+				if err != nil || string(got) != "external" {
+					t.Fatalf("external symlink allowed: %q, %v", got, err)
+				}
+			} else if !errors.Is(err, os.ErrPermission) {
+				t.Fatalf("external symlink denied: %v", err)
+			}
+		}
+	}
+}
+
+func TestPatchPrepareOnlyValidates(t *testing.T) {
+	current := User{ID: 7, Username: "u", Password: "p", Scope: "/missing"}
+	viewMode := ViewMode("")
+	merged, _, err := (Patch{ViewMode: &viewMode}).Prepare(current, false, PatchPolicy{Actor: &current})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.Fs != nil || merged.ViewMode != ListViewMode || current.ViewMode != "" {
+		t.Fatalf("prepare initialized filesystem or mutated original: %+v", merged)
 	}
 }

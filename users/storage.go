@@ -6,6 +6,7 @@ import (
 	"time"
 
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
+	"github.com/spf13/afero"
 )
 
 // StorageBackend is the interface to implement for a users storage.
@@ -34,6 +35,7 @@ type Store interface {
 // Storage is a users storage.
 type Storage struct {
 	back    StorageBackend
+	fs      afero.Fs
 	updated map[uint]int64
 	mux     sync.RWMutex
 
@@ -44,8 +46,17 @@ type Storage struct {
 
 // NewStorage creates a users storage from a backend.
 func NewStorage(back StorageBackend) *Storage {
+	return NewStorageWithFilesystem(back, afero.NewOsFs())
+}
+
+// NewStorageWithFilesystem creates a users storage whose runtime reads bind
+// users to source. source must be non-nil for runtime reads; writes only validate
+// persisted data. Symlink confinement requires an OS-backed source. For non-OS
+// sources, Get/Gets must use followExternalSymlinks=true for lexical confinement.
+func NewStorageWithFilesystem(back StorageBackend, source afero.Fs) *Storage {
 	return &Storage{
 		back:    back,
+		fs:      source,
 		updated: map[uint]int64{},
 	}
 }
@@ -58,8 +69,11 @@ func (s *Storage) Get(baseScope string, followExternalSymlinks bool, id interfac
 	if err != nil {
 		return
 	}
-	if err := user.Clean(baseScope, followExternalSymlinks); err != nil {
+	if err := user.Validate(); err != nil {
 		return nil, err
+	}
+	if user.Fs == nil {
+		user.BindFilesystem(s.fs, baseScope, followExternalSymlinks)
 	}
 	return
 }
@@ -79,8 +93,11 @@ func (s *Storage) Gets(baseScope string, followExternalSymlinks bool) ([]*User, 
 	}
 
 	for _, user := range users {
-		if err := user.Clean(baseScope, followExternalSymlinks); err != nil {
+		if err := user.Validate(); err != nil {
 			return nil, err
+		}
+		if user.Fs == nil {
+			user.BindFilesystem(s.fs, baseScope, followExternalSymlinks)
 		}
 	}
 
@@ -95,7 +112,7 @@ func (s *Storage) Update(user *User, fields ...string) error {
 	}
 	// Validate a copy so a rejected update cannot change a caller's cached user.
 	merged := patch.Merge(*user)
-	if err := merged.Clean("", false, patch.Fields()...); err != nil {
+	if err := merged.Validate(patch.Fields()...); err != nil {
 		return err
 	}
 
@@ -112,7 +129,7 @@ func (s *Storage) Update(user *User, fields ...string) error {
 
 // Save saves the user in a storage.
 func (s *Storage) Save(user *User) error {
-	if err := user.Clean("", false); err != nil {
+	if err := user.Validate(); err != nil {
 		return err
 	}
 

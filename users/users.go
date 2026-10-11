@@ -53,9 +53,33 @@ var checkableFields = []string{
 	"Rules",
 }
 
-// Clean cleans up a user and verifies if all its fields
-// are alright to be saved.
+// Clean validates a user and initializes its filesystem when absent.
+// Deprecated: use Validate for persisted data and BindFilesystem explicitly
+// when preparing a user to serve files.
 func (u *User) Clean(baseScope string, followExternalSymlinks bool, fields ...string) error {
+	if err := u.Validate(fields...); err != nil {
+		return err
+	}
+	if u.Fs == nil {
+		u.BindFilesystem(afero.NewOsFs(), baseScope, followExternalSymlinks)
+	}
+	return nil
+}
+
+// BindFilesystem replaces the runtime filesystem using the supplied source,
+// server root and symlink policy. It does not validate or change persisted fields.
+// source must be non-nil. Symlink confinement requires an OS-backed source.
+// Filesystems without OS symlink support must use
+// followExternalSymlinks=true to retain lexical scope confinement only.
+func (u *User) BindFilesystem(source afero.Fs, baseScope string, followExternalSymlinks bool) {
+	scope := filepath.Join(baseScope, filepath.Join("/", u.Scope))
+	u.Fs = files.NewFs(source, scope, followExternalSymlinks)
+}
+
+// Validate checks selected persisted fields and supplies their defaults without
+// reading, initializing or replacing the runtime filesystem. No selection
+// validates all checkable fields.
+func (u *User) Validate(fields ...string) error {
 	if len(fields) == 0 {
 		fields = checkableFields
 	}
@@ -87,12 +111,6 @@ func (u *User) Clean(baseScope string, followExternalSymlinks bool, fields ...st
 				u.Rules = []rules.Rule{}
 			}
 		}
-	}
-
-	if u.Fs == nil {
-		scope := u.Scope
-		scope = filepath.Join(baseScope, filepath.Join("/", scope))
-		u.Fs = files.NewFs(afero.NewOsFs(), scope, followExternalSymlinks)
 	}
 
 	return nil

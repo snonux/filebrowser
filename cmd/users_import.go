@@ -40,7 +40,7 @@ list or set it to 0.`,
 		}
 
 		for _, user := range list {
-			err = user.Clean("", false)
+			err = user.Validate()
 			if err != nil {
 				return err
 			}

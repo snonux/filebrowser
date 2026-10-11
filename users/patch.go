@@ -312,7 +312,7 @@ func (p Patch) Prepare(current User, full bool, policy PatchPolicy) (User, Patch
 	if merged.Perm.Share && !merged.Perm.Download {
 		return User{}, Patch{}, fberrors.ErrShareRequiresDownload
 	}
-	if err := merged.Clean("", false, p.Fields()...); err != nil {
+	if err := merged.Validate(p.Fields()...); err != nil {
 		return User{}, Patch{}, err
 	}
 	return merged, p, nil
