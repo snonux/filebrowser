@@ -154,7 +154,10 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
         appBar: appBar,
         // A folder opened from another shows a back arrow; the menu drawer
         // is on the first screen of the stack.
-        drawer: _selecting || GoRouter.of(context).canPop()
+        // An open drawer adds local history, so Navigator.canPop() becomes
+        // true even on the first page. Check the page itself to keep its
+        // drawer attached when token renewal or file updates rebuild it.
+        drawer: _selecting || ModalRoute.of(context)?.isFirst == false
             ? null
             : AppDrawer(currentPath: _path),
         floatingActionButton: perm.create && !_selecting
