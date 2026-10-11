@@ -114,7 +114,12 @@ func tusPostHandler(cache UploadCache) handleFunc {
 		}
 
 		uploadMutations.barrier.Lock()
-		defer uploadMutations.barrier.Unlock()
+		unlockMutation := uploadMutations.barrier.Unlock
+		defer func() {
+			if unlockMutation != nil {
+				unlockMutation()
+			}
+		}()
 		key := uploadLockKey(d, r.URL.Path)
 
 		file, err := files.NewFileInfo(&files.FileOptions{
@@ -178,11 +183,17 @@ func tusPostHandler(cache UploadCache) handleFunc {
 			return errToStatus(err), err
 		}
 
-		owned, err := openFile.Stat()
-		if err != nil {
-			return errToStatus(err), err
+		if uploadLength == 0 {
+			// Empty uploads are complete at creation. Never give eviction
+			// ownership of the finished file, including when replacing an upload.
+			cache.Complete(file.RealPath())
+		} else {
+			owned, err := openFile.Stat()
+			if err != nil {
+				return errToStatus(err), err
+			}
+			registerOwnedUpload(cache, key, uploadPathKey(d, r.URL.Path), file.RealPath(), uploadLength, d.user.Fs, r.URL.Path, owned)
 		}
-		registerOwnedUpload(cache, key, uploadPathKey(d, r.URL.Path), file.RealPath(), uploadLength, d.user.Fs, r.URL.Path, owned)
 
 		basePath := "/" + strings.Trim(strings.TrimSpace(d.server.BaseURL), "/")
 		if basePath == "/" {
@@ -190,6 +201,11 @@ func tusPostHandler(cache UploadCache) handleFunc {
 		}
 
 		w.Header().Set("Location", basePath+"/api/tus"+r.URL.EscapedPath())
+		if uploadLength == 0 {
+			unlockMutation()
+			unlockMutation = nil
+			_ = d.RunHook(func() error { return nil }, "upload", r.URL.Path, "", d.user)
+		}
 		return http.StatusCreated, nil
 	})
 }
