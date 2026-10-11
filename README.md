@@ -50,7 +50,7 @@ App releases are tagged `android-vX.Y.Z`; the server keeps the `vX.Y.Z` tags.
 ## Security
 
 The fixes below landed in this fork after the upstream archive (last upstream release: v2.63.23). They are
-on `master`; no server release or Docker image has been cut from this fork yet, so build from source
+included in server release `v2.63.24` and later. Build from the release tag
 (see [CONTRIBUTING.md](CONTRIBUTING.md)) to get them. Where a fix answers a report filed against upstream,
 the report's GHSA id is given.
 

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [2.63.24](https://github.com/snonux/filebrowser/releases/tag/v2.63.24) (2026-10-11)
+
+### Bug Fixes
+
+* Apply the fork's security fixes and code quality audit corrections to the server release.
+* Preserve shares when file deletion fails and enforce scoped file operations consistently.
+* Handle empty and concurrent resumable uploads, upload expiry, and length validation safely.
+* Cancel stale authentication callbacks and shut down background cache workers cleanly.
+* Display streamed shell output immediately and retain shared-link rows when deletion fails.
+
+### Refactorings
+
+* Consolidate user provisioning and validation, atomic user updates, and scoped resource operations.
+* Bound cache mutation locks and publish thumbnail entries atomically.
+
 ## [2.63.23](https://github.com/filebrowser/filebrowser/compare/v2.63.22...v2.63.23) (2026-07-27)
 ## [2.63.22](https://github.com/filebrowser/filebrowser/compare/v2.63.21...v2.63.22) (2026-07-27)
 
