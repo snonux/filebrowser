@@ -16,6 +16,7 @@ import (
 
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/files"
+	"github.com/filebrowser/filebrowser/v2/internal/resourceops"
 	"github.com/filebrowser/filebrowser/v2/share"
 	"github.com/filebrowser/filebrowser/v2/users"
 	"golang.org/x/crypto/bcrypt"
@@ -160,36 +161,17 @@ func shareOwner(d *data, owners map[uint]*users.User, id uint) (*users.User, err
 // while leaving alone a share whose scope-relative path merely collides with
 // the one being removed but names a different file.
 func deleteSharesUnder(d *data, path string) error {
-	// Without a disk-backed filesystem there is no on-disk location to compare,
-	// so fall back to matching the user's own shares by path.
 	if files.BasePath(d.user.Fs) == nil {
-		return d.store.Share.DeleteWithPathPrefix(path, d.user.ID)
+		return resourceops.DeleteSharesUnder(d.store.Share, path, d.user.ID, "", nil)
 	}
-
-	links, err := d.store.Share.All()
-	if errors.Is(err, fberrors.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	target := d.shareLocation(d.user, path)
 	owners := make(map[uint]*users.User)
-	for _, link := range links {
-		owner, ownerErr := shareOwner(d, owners, link.UserID)
-		if ownerErr != nil {
-			err = errors.Join(err, ownerErr)
-			continue
+	return resourceops.DeleteSharesUnder(d.store.Share, path, d.user.ID, d.shareLocation(d.user, path), func(id uint, path string) (string, error) {
+		owner, err := shareOwner(d, owners, id)
+		if err != nil || owner == nil {
+			return "", err
 		}
-		if owner == nil || !isPathWithin(d.shareLocation(owner, link.Path), target) {
-			continue
-		}
-
-		err = errors.Join(err, d.store.Share.Delete(link.Hash))
-	}
-
-	return err
+		return d.shareLocation(owner, path), nil
+	})
 }
 
 // shareLocation returns the on-disk location a path names for a given user, in
@@ -205,13 +187,7 @@ func (d *data) shareLocation(u *users.User, path string) string {
 
 // isPathWithin reports whether location is dir itself or lies below it.
 func isPathWithin(location, dir string) bool {
-	if location == dir {
-		return true
-	}
-	if !strings.HasSuffix(dir, string(filepath.Separator)) {
-		dir += string(filepath.Separator)
-	}
-	return strings.HasPrefix(location, dir)
+	return resourceops.IsPathWithin(location, dir)
 }
 
 var shareDeleteHandler = withPermShare(func(_ http.ResponseWriter, r *http.Request, d *data) (int, error) {

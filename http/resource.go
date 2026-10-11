@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +17,7 @@ import (
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/files"
 	"github.com/filebrowser/filebrowser/v2/fileutils"
+	"github.com/filebrowser/filebrowser/v2/internal/resourceops"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/spf13/afero"
 )
@@ -91,48 +91,7 @@ func resourceDeleteHandler(fileCache FileCache) handleFunc {
 			return http.StatusForbidden, nil
 		}
 
-		file, err := files.NewFileInfo(&files.FileOptions{
-			Fs:         d.user.Fs,
-			Path:       r.URL.Path,
-			Modify:     d.user.Perm.Modify,
-			Expand:     false,
-			ReadHeader: d.server.TypeDetectionByHeader,
-			Checker:    d,
-		})
-		if err != nil {
-			return errToStatus(err), err
-		}
-
-		if err = checkDescendants(d, r.URL.Path, ""); err != nil {
-			return errToStatus(err), err
-		}
-
-		// Drop the shares that pointed at what is being deleted, whoever owns
-		// them: the file may be shared by another user whose scope reaches it.
-		err = deleteSharesUnder(d, file.Path)
-		if err != nil {
-			log.Printf("WARNING: Error(s) occurred while deleting associated shares with file: %s", err)
-		}
-
-		// delete thumbnails
-		err = delThumbs(r.Context(), fileCache, file)
-		if err != nil {
-			return errToStatus(err), err
-		}
-
-		err = d.RunHook(func() error {
-			uploadMutations.barrier.Lock()
-			defer uploadMutations.barrier.Unlock()
-			if !d.Check(r.URL.Path) {
-				return fberrors.ErrPermissionDenied
-			}
-			if err := checkDescendants(d, r.URL.Path, ""); err != nil {
-				return err
-			}
-			retireUploadsUnder(uploadLockKey(d, r.URL.Path))
-			return d.user.Fs.RemoveAll(r.URL.Path)
-		}, "delete", r.URL.Path, "", d.user)
-
+		err := resourceOperations(d, fileCache).Delete(r.Context(), r.URL.Path)
 		if err != nil {
 			return errToStatus(err), err
 		}
@@ -319,6 +278,11 @@ func resourcePatchHandler(fileCache FileCache) handleFunc {
 			return errToStatus(err), err
 		}
 
+		if action == "rename" {
+			err = resourceOperations(d, fileCache).Rename(r.Context(), src, dst, r.URL.Query().Get("override") == "true")
+			return errToStatus(err), err
+		}
+
 		err = d.RunHook(func() error {
 			uploadMutations.barrier.Lock()
 			defer uploadMutations.barrier.Unlock()
@@ -339,7 +303,7 @@ func resourcePatchHandler(fileCache FileCache) handleFunc {
 			if dstErr == nil && r.URL.Query().Get("override") != "true" && !(action == "rename" && os.SameFile(srcInfo, dstInfo)) {
 				return fberrors.ErrExist
 			}
-			return patchAction(r.Context(), action, src, dst, d, fileCache)
+			return patchAction(action, src, dst, d)
 		}, action, src, dst, d.user)
 
 		return errToStatus(err), err
@@ -355,46 +319,10 @@ func checkDescendants(d *data, src, dst string) error {
 	if len(d.settings.Rules) == 0 && len(d.user.Rules) == 0 {
 		return nil
 	}
-
-	return afero.Walk(d.user.Fs, src, func(fPath string, _ os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if !d.CheckRules(fPath) {
-			return fberrors.ErrPermissionDenied
-		}
-
-		if dst == "" {
-			return nil
-		}
-
-		rel, err := filepath.Rel(src, fPath)
-		if err != nil {
-			return err
-		}
-
-		if !d.CheckRules(filepath.Join(dst, rel)) {
-			return fberrors.ErrPermissionDenied
-		}
-
-		return nil
-	})
+	return (resourceops.Operations{Fs: d.user.Fs, Checker: d}).CheckDescendants(src, dst)
 }
 
-func checkParent(src, dst string) error {
-	rel, err := filepath.Rel(src, dst)
-	if err != nil {
-		return err
-	}
-
-	rel = filepath.ToSlash(rel)
-	if !strings.HasPrefix(rel, "../") && rel != ".." && rel != "." {
-		return fberrors.ErrSourceIsParent
-	}
-
-	return nil
-}
+func checkParent(src, dst string) error { return resourceops.CheckParent(src, dst) }
 
 func addVersionSuffix(source string, afs afero.Fs) string {
 	counter := 1
@@ -458,7 +386,7 @@ func delThumbs(ctx context.Context, fileCache FileCache, file *files.FileInfo) e
 	return nil
 }
 
-func patchAction(ctx context.Context, action, src, dst string, d *data, fileCache FileCache) error {
+func patchAction(action, src, dst string, d *data) error {
 	switch action {
 	case "copy":
 		if !d.user.Perm.Create {
@@ -469,55 +397,7 @@ func patchAction(ctx context.Context, action, src, dst string, d *data, fileCach
 			return err
 		}
 		return fileutils.Copy(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode)
-	case "rename":
-		if !d.user.Perm.Rename {
-			return fberrors.ErrPermissionDenied
-		}
-		src = path.Clean("/" + src)
-		dst = path.Clean("/" + dst)
 
-		file, err := files.NewFileInfo(&files.FileOptions{
-			Fs:         d.user.Fs,
-			Path:       src,
-			Modify:     d.user.Perm.Modify,
-			Expand:     false,
-			ReadHeader: false,
-			Checker:    d,
-		})
-		if err != nil {
-			return err
-		}
-
-		// delete thumbnails
-		err = delThumbs(ctx, fileCache, file)
-		if err != nil {
-			return err
-		}
-
-		retireUploadsUnder(uploadLockKey(d, src))
-		copied := false
-		err = fileutils.MoveFileWithFallback(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode, func() error {
-			copied = true
-			return retireCopyDestination(d, src, dst)
-		})
-		if err != nil {
-			return err
-		}
-		if !copied {
-			// A native rename replaces the destination rather than merging it.
-			// The exclusive barrier still blocks cleanup of its old uploads.
-			retireUploadsUnder(uploadPathKey(d, dst))
-		}
-
-		// The old path no longer names what was shared. Drop its shares, as a
-		// delete does, or the old links would serve whatever file is created
-		// under that name next. The move itself succeeded, so a cleanup failure
-		// is reported in the log rather than turned into a failed rename.
-		if shareErr := deleteSharesUnder(d, src); shareErr != nil {
-			log.Printf("WARNING: Error(s) occurred while deleting associated shares with file: %s", shareErr)
-		}
-
-		return nil
 	default:
 		return fmt.Errorf("unsupported action %s: %w", action, fberrors.ErrInvalidRequestParams)
 	}
