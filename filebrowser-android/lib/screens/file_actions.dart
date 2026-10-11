@@ -412,6 +412,7 @@ class _InfoDialogState extends ConsumerState<_InfoDialog> {
           .read(requireSessionProvider)
           .api
           .checksum(widget.item.path, 'sha256');
+      if (!mounted) return;
       setState(() => _checksum = sum);
     } on ApiException catch (e) {
       showMessage(e.message);
