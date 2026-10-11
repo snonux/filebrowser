@@ -135,40 +135,16 @@ func (a *HookAuth) SaveUser() (*users.User, error) {
 	}
 
 	if u == nil {
-		pass, err := users.ValidateAndHashPwd(a.Cred.Password, a.Settings.MinimumPasswordLength)
+		d, err := a.Settings.NewUser(a.Cred.Username, a.Cred.Password, settings.ProvisionHook)
 		if err != nil {
 			return nil, err
 		}
-
-		// create user with the provided credentials
-		d := &users.User{
-			Username:              a.Cred.Username,
-			Password:              pass,
-			Scope:                 a.Settings.Defaults.Scope,
-			Locale:                a.Settings.Defaults.Locale,
-			ViewMode:              a.Settings.Defaults.ViewMode,
-			SingleClick:           a.Settings.Defaults.SingleClick,
-			RedirectAfterCopyMove: a.Settings.Defaults.RedirectAfterCopyMove,
-			Sorting:               a.Settings.Defaults.Sorting,
-			Perm:                  a.Settings.Defaults.Perm,
-			Commands:              a.Settings.Defaults.Commands,
-			DateFormat:            a.Settings.Defaults.DateFormat,
-			HideDotfiles:          a.Settings.Defaults.HideDotfiles,
-		}
 		u = a.GetUser(d)
-
-		// A scope explicitly returned by the hook takes precedence over the
-		// automatic per-user home directory derivation.
 		_, explicitScope := a.Fields.Values["user.scope"]
-		derivedScope, err := a.Settings.CreateUserHome(u, a.Server.Root, explicitScope)
-		if err != nil {
+		if err := a.Settings.ProvisionUser(a.Users, u, a.Server.Root, settings.ProvisionHook, explicitScope); err != nil {
 			return nil, err
 		}
 		log.Printf("user: %s, home dir: [%s].", u.Username, u.Scope)
-
-		if err := a.Users.SaveProvisioned(u, derivedScope); err != nil {
-			return nil, err
-		}
 	} else if p := !users.CheckPwd(a.Cred.Password, u.Password); len(a.Fields.Values) > 1 || p {
 		u = a.GetUser(u)
 
@@ -205,25 +181,25 @@ func (a *HookAuth) GetUser(d *users.User) *users.User {
 		Share:    isAdmin || a.Fields.GetBoolean("user.perm.share", d.Perm.Share),
 		Download: isAdmin || a.Fields.GetBoolean("user.perm.download", d.Perm.Download),
 	}
-	user := users.User{
-		ID:                    d.ID,
-		Username:              d.Username,
-		Password:              d.Password,
-		Scope:                 a.Fields.GetString("user.scope", d.Scope),
-		Locale:                a.Fields.GetString("user.locale", d.Locale),
-		ViewMode:              users.ViewMode(a.Fields.GetString("user.viewMode", string(d.ViewMode))),
-		SingleClick:           a.Fields.GetBoolean("user.singleClick", d.SingleClick),
-		RedirectAfterCopyMove: a.Fields.GetBoolean("user.redirectAfterCopyMove", d.RedirectAfterCopyMove),
-		Sorting: files.Sorting{
-			Asc: a.Fields.GetBoolean("user.sorting.asc", d.Sorting.Asc),
-			By:  a.Fields.GetString("user.sorting.by", d.Sorting.By),
-		},
-		Commands:     a.Fields.GetArray("user.commands", d.Commands),
-		DateFormat:   a.Fields.GetBoolean("user.dateFormat", d.DateFormat),
-		HideDotfiles: a.Fields.GetBoolean("user.hideDotfiles", d.HideDotfiles),
-		Perm:         perms,
-		LockPassword: true,
+	// Preserve fields the hook does not support when updating an account.
+	user := *d
+	user.Scope = a.Fields.GetString("user.scope", d.Scope)
+	if user.Scope != d.Scope {
+		user.Fs = nil
 	}
+	user.Locale = a.Fields.GetString("user.locale", d.Locale)
+	user.ViewMode = users.ViewMode(a.Fields.GetString("user.viewMode", string(d.ViewMode)))
+	user.SingleClick = a.Fields.GetBoolean("user.singleClick", d.SingleClick)
+	user.RedirectAfterCopyMove = a.Fields.GetBoolean("user.redirectAfterCopyMove", d.RedirectAfterCopyMove)
+	user.Sorting = files.Sorting{
+		Asc: a.Fields.GetBoolean("user.sorting.asc", d.Sorting.Asc),
+		By:  a.Fields.GetString("user.sorting.by", d.Sorting.By),
+	}
+	user.Commands = a.Fields.GetArray("user.commands", d.Commands)
+	user.DateFormat = a.Fields.GetBoolean("user.dateFormat", d.DateFormat)
+	user.HideDotfiles = a.Fields.GetBoolean("user.hideDotfiles", d.HideDotfiles)
+	user.Perm = perms
+	user.LockPassword = true
 
 	return &user
 }

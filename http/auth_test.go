@@ -1,6 +1,7 @@
 package fbhttp
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -148,4 +149,42 @@ func TestExpiredTokenNeedsProxyAssertion(t *testing.T) {
 			t.Errorf("valid token = %d, body=%q; want 200", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+func TestSignupProvisioningDefaults(t *testing.T) {
+	for _, createHome := range []bool{false, true} {
+		t.Run(fmt.Sprint(createHome), func(t *testing.T) {
+			root := t.TempDir()
+			st := scopedUserStorage(t, root, users.Permissions{}, []byte("key"))
+			s := &settings.Settings{Key: []byte("key"), Signup: true, CreateUserDir: createHome, UserHomeBasePath: "/homes", MinimumPasswordLength: 8, Defaults: settings.UserDefaults{Scope: "/shared", Locale: "fr", AceEditorTheme: "twilight", ViewMode: users.MosaicViewMode, SingleClick: true, RedirectAfterCopyMove: true, DateFormat: true, HideDotfiles: true, Perm: users.Permissions{Admin: true, Execute: true, Create: true}, Commands: []string{"ls"}}}
+			if err := st.Settings.Save(s); err != nil {
+				t.Fatal(err)
+			}
+			signup := func(body string) *httptest.ResponseRecorder {
+				rec := httptest.NewRecorder()
+				handle(signupHandler, "", st, &settings.Server{Root: root}).ServeHTTP(rec, httptest.NewRequest("POST", "/signup", strings.NewReader(body)))
+				return rec
+			}
+			if rec := signup(`{"username":"alice","password":"a-strong-password"}`); rec.Code != http.StatusOK {
+				t.Fatalf("signup = %d %s", rec.Code, rec.Body.String())
+			}
+			u, err := st.Users.Get(root, false, "alice")
+			if err != nil {
+				t.Fatal(err)
+			}
+			scope := "/shared"
+			if createHome {
+				scope = "/homes/alice"
+			}
+			if u.Scope != scope || u.Locale != "fr" || u.AceEditorTheme != "twilight" || u.ViewMode != users.MosaicViewMode || !u.SingleClick || !u.RedirectAfterCopyMove || !u.DateFormat || !u.HideDotfiles || !u.Perm.Create || u.Perm.Admin || u.Perm.Execute || len(u.Commands) != 0 || u.LockPassword || !users.CheckPwd("a-strong-password", u.Password) {
+				t.Fatalf("user = %+v", u)
+			}
+			if rec := signup(`{"username":"short","password":"x"}`); rec.Code != http.StatusBadRequest {
+				t.Fatalf("short password = %d", rec.Code)
+			}
+			if _, err := st.Users.Get(root, false, "short"); err == nil {
+				t.Fatal("short password user persisted")
+			}
+		})
+	}
 }

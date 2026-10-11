@@ -202,42 +202,18 @@ var signupHandler = func(w http.ResponseWriter, r *http.Request, d *data) (int, 
 		return http.StatusBadRequest, nil
 	}
 
-	user := &users.User{
-		Username: info.Username,
-	}
-
-	d.settings.Defaults.Apply(user)
-
-	// Users signed up via the signup handler should never become admins, even
-	// if that is the default permission.
-	user.Perm.Admin = false
-
-	// Self-registered users should not inherit execution capabilities from
-	// default settings, regardless of what the administrator has configured
-	// as the default. Execution rights must be explicitly granted by an admin.
-	user.Perm.Execute = false
-	user.Commands = []string{}
-
-	pwd, err := users.ValidateAndHashPwd(info.Password, d.settings.MinimumPasswordLength)
+	user, err := d.settings.NewUser(info.Username, info.Password, settings.ProvisionSignup)
 	if err != nil {
 		return http.StatusBadRequest, err
 	}
-
-	user.Password = pwd
-
-	derivedScope, err := d.settings.CreateUserHome(user, d.server.Root, false)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-
-	log.Printf("new user: %s, home dir: [%s].", user.Username, user.Scope)
-
-	err = d.store.Users.SaveProvisioned(user, derivedScope)
+	err = d.settings.ProvisionUser(d.store.Users, user, d.server.Root, settings.ProvisionSignup, false)
 	if errors.Is(err, fberrors.ErrExist) {
 		return http.StatusConflict, err
 	} else if err != nil {
 		return http.StatusInternalServerError, err
 	}
+
+	log.Printf("new user: %s, home dir: [%s].", user.Username, user.Scope)
 
 	return http.StatusOK, nil
 }

@@ -28,34 +28,11 @@ func (a ProxyAuth) Auth(r *http.Request, usr users.Store, setting *settings.Sett
 }
 
 func (a ProxyAuth) createUser(usr users.Store, setting *settings.Settings, srv *settings.Server, username string) (*users.User, error) {
-	const randomPasswordLength = settings.DefaultMinimumPasswordLength + 10
-	pwd, err := users.RandomPwd(randomPasswordLength)
+	user, err := setting.NewUser(username, "", settings.ProvisionProxy)
 	if err != nil {
 		return nil, err
 	}
-
-	var hashedRandomPassword string
-	hashedRandomPassword, err = users.ValidateAndHashPwd(pwd, setting.MinimumPasswordLength)
-	if err != nil {
-		return nil, err
-	}
-
-	user := &users.User{
-		Username:     username,
-		Password:     hashedRandomPassword,
-		LockPassword: true,
-	}
-	setting.Defaults.Apply(user)
-	user.Perm.Admin = false
-	user.Perm.Execute = false
-	user.Commands = []string{}
-
-	var derivedScope bool
-	if derivedScope, err = setting.CreateUserHome(user, srv.Root, false); err != nil {
-		return nil, err
-	}
-
-	if err = usr.SaveProvisioned(user, derivedScope); err != nil {
+	if err := setting.ProvisionUser(usr, user, srv.Root, settings.ProvisionProxy, false); err != nil {
 		return nil, err
 	}
 

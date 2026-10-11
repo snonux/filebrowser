@@ -33,7 +33,7 @@ func (m *mockUserStore) GetByScope(scope string) (*users.User, error) {
 }
 
 func (m *mockUserStore) Gets(_ string, _ bool) ([]*users.User, error) { return nil, nil }
-func (m *mockUserStore) Update(_ *users.User, _ ...string) error      { return nil }
+func (m *mockUserStore) Update(u *users.User, _ ...string) error      { m.users[u.Username] = u; return nil }
 func (m *mockUserStore) Save(user *users.User) error {
 	m.users[user.Username] = user
 	return nil
@@ -71,7 +71,11 @@ func TestProxyAuthCreateUserRestrictsDefaults(t *testing.T) {
 				Share:    true,
 				Download: true,
 			},
-			Commands: []string{"git", "ls", "cat", "id"},
+			Commands:       []string{"git", "ls", "cat", "id"},
+			AceEditorTheme: "monokai",
+			Locale:         "de",
+			DateFormat:     true,
+			HideDotfiles:   true,
 		},
 	}
 
@@ -84,6 +88,9 @@ func TestProxyAuthCreateUserRestrictsDefaults(t *testing.T) {
 		t.Fatalf("Auth() error: %v", err)
 	}
 
+	if user.AceEditorTheme != "monokai" || user.Locale != "de" || !user.DateFormat || !user.HideDotfiles || !user.LockPassword {
+		t.Fatalf("defaults or lock lost: %+v", user)
+	}
 	if user.Perm.Admin {
 		t.Error("auto-provisioned proxy user should not have Admin permission")
 	}
