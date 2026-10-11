@@ -172,7 +172,7 @@ func tusPostHandler(cache UploadCache) handleFunc {
 		if err != nil {
 			return errToStatus(err), err
 		}
-		defer openFile.Close()
+		defer func(closeResource func() error) { _ = closeResource() }(openFile.Close) // No content is written by creation.
 
 		file, err = files.NewFileInfo(&files.FileOptions{
 			Fs:         d.user.Fs,
@@ -285,7 +285,7 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 	if value, ok := uploadMutations.entries.Load(originalKey); ok {
 		generation = value.(*uploadGeneration)
 	}
-	uploadLength, cacheKey, status, err := inspectPatchUpload(r.Context(), d, r.URL.Path, cache, uploadOffset, generation)
+	_, cacheKey, status, err := inspectPatchUpload(r.Context(), d, r.URL.Path, cache, uploadOffset, generation)
 	if status != 0 {
 		return status, err
 	}
@@ -315,7 +315,7 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 	}
 	// The directory operation may have replaced or retired the file while we
 	// waited. Recheck the original request offset under the mutation lock.
-	uploadLength, cacheKey, status, err = inspectPatchUpload(r.Context(), d, r.URL.Path, cache, uploadOffset, generation)
+	uploadLength, cacheKey, status, err := inspectPatchUpload(r.Context(), d, r.URL.Path, cache, uploadOffset, generation)
 	if status != 0 {
 		return status, err
 	}
@@ -324,7 +324,7 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 	if err != nil {
 		return http.StatusInternalServerError, fmt.Errorf("could not open file: %w", err)
 	}
-	defer openFile.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(openFile.Close) // Content writes are checked by Sync before completion.
 	// A path may have been replaced after inspection, including by a native
 	// rename through a symlink target. Verify the handle we will actually write.
 	openedInfo, err := openFile.Stat()

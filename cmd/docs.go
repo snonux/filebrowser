@@ -31,7 +31,7 @@ var docsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer os.RemoveAll(tempDir)
+		defer func() { _ = os.RemoveAll(tempDir) }() // Temporary documentation cleanup.
 
 		rootCmd.Root().DisableAutoGenTag = true
 

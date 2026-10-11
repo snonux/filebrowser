@@ -155,7 +155,7 @@ func getFiles(d *data, path, commonPath string) ([]archives.FileInfo, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer f.Close()
+		defer func(closeResource func() error) { _ = closeResource() }(f.Close) // Best-effort resource cleanup.
 
 		names, err := f.Readdirnames(0)
 		if err != nil {
@@ -241,7 +241,7 @@ func rawFileHandler(w http.ResponseWriter, r *http.Request, file *files.FileInfo
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	defer fd.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(fd.Close) // Best-effort resource cleanup.
 
 	setContentDisposition(w, r, file)
 	w.Header().Add("Content-Security-Policy", `script-src 'none';`)

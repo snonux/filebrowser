@@ -105,7 +105,6 @@ options you want to change.`,
 		if err != nil {
 			return err
 		}
-		printUsers([]*users.User{user})
-		return nil
+		return printUsers([]*users.User{user})
 	}, storeOptions{}),
 }

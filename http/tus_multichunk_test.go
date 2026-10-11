@@ -94,7 +94,7 @@ func (f *tusTestFixture) create(t *testing.T, name string, length int) string {
 	if err != nil {
 		t.Fatalf("POST create: %v", err)
 	}
-	defer res.Body.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(res.Body.Close) // Best-effort resource cleanup.
 	body, _ := io.ReadAll(res.Body)
 
 	if res.StatusCode != http.StatusCreated {
@@ -158,7 +158,7 @@ func TestTusMultiChunkUpload(t *testing.T) {
 
 		res, _ := f.patch(t, uploadURL, offset, payload[offset:end])
 		body, _ := io.ReadAll(res.Body)
-		res.Body.Close()
+		_ = res.Body.Close() // Response body cleanup.
 
 		if res.StatusCode != http.StatusNoContent {
 			t.Fatalf("PATCH at offset %d: status %d body %q", offset, res.StatusCode, body)
@@ -191,7 +191,7 @@ func TestTusHeadReportsOffsetBetweenChunks(t *testing.T) {
 	uploadURL := f.create(t, "resume.bin", fileSize)
 
 	res, _ := f.patch(t, uploadURL, 0, payload[:chunkSize])
-	res.Body.Close()
+	_ = res.Body.Close() // Response body cleanup.
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("first PATCH: status %d", res.StatusCode)
 	}
@@ -206,7 +206,7 @@ func TestTusHeadReportsOffsetBetweenChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HEAD: %v", err)
 	}
-	defer headRes.Body.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(headRes.Body.Close) // Best-effort resource cleanup.
 
 	if headRes.StatusCode != http.StatusOK {
 		t.Fatalf("HEAD: status %d", headRes.StatusCode)
@@ -234,7 +234,7 @@ func TestTusPatchRejectionKeepsConnectionUsable(t *testing.T) {
 
 	// Land the first chunk so the file size no longer matches offset 0.
 	res, _ := f.patch(t, uploadURL, 0, payload[:chunkSize])
-	res.Body.Close()
+	_ = res.Body.Close() // Response body cleanup.
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("first PATCH: status %d", res.StatusCode)
 	}
@@ -242,7 +242,7 @@ func TestTusPatchRejectionKeepsConnectionUsable(t *testing.T) {
 	// Replaying offset 0 with a full chunk must be answered with a real 409.
 	res, _ = f.patch(t, uploadURL, 0, payload[:chunkSize])
 	body, _ := io.ReadAll(res.Body)
-	res.Body.Close()
+	_ = res.Body.Close() // Response body cleanup.
 	if res.StatusCode != http.StatusConflict {
 		t.Fatalf("stale-offset PATCH: status %d body %q, want 409", res.StatusCode, body)
 	}
@@ -251,7 +251,7 @@ func TestTusPatchRejectionKeepsConnectionUsable(t *testing.T) {
 	// reported as a network failure.
 	res, reused := f.patch(t, uploadURL, chunkSize, payload[chunkSize:])
 	body, _ = io.ReadAll(res.Body)
-	res.Body.Close()
+	_ = res.Body.Close() // Response body cleanup.
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("PATCH after rejection: status %d body %q", res.StatusCode, body)
 	}
@@ -280,14 +280,14 @@ func TestTusOverLengthPatchKeepsConnectionUsable(t *testing.T) {
 
 	res, _ := f.patch(t, uploadURL, 0, payload)
 	body, _ := io.ReadAll(res.Body)
-	res.Body.Close()
+	_ = res.Body.Close() // Response body cleanup.
 	if res.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("over-length PATCH: status %d body %q, want 413", res.StatusCode, body)
 	}
 
 	res, reused := f.patch(t, uploadURL, 0, payload[:declared])
 	body, _ = io.ReadAll(res.Body)
-	res.Body.Close()
+	_ = res.Body.Close() // Response body cleanup.
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("PATCH after rejection: status %d body %q", res.StatusCode, body)
 	}

@@ -103,7 +103,7 @@ func (r *ReCaptcha) Ok(response string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(resp.Body.Close) // Best-effort resource cleanup.
 
 	if resp.StatusCode != http.StatusOK {
 		return false, nil

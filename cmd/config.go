@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -197,79 +198,88 @@ func getAuthentication(flags *pflag.FlagSet, defaults ...interface{}) (settings.
 }
 
 func printSettings(ser *settings.Server, set *settings.Settings, auther auth.Auther) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	return printSettingsTo(os.Stdout, ser, set, auther)
+}
 
-	fmt.Fprintf(w, "Sign up:\t%t\n", set.Signup)
-	fmt.Fprintf(w, "Hide Login Button:\t%t\n", set.HideLoginButton)
-	fmt.Fprintf(w, "Create User Dir:\t%t\n", set.CreateUserDir)
-	fmt.Fprintf(w, "Logout Page:\t%s\n", set.LogoutPage)
-	fmt.Fprintf(w, "Minimum Password Length:\t%d\n", set.MinimumPasswordLength)
-	fmt.Fprintf(w, "Auth Method:\t%s\n", set.AuthMethod)
-	fmt.Fprintf(w, "Shell:\t%s\t\n", strings.Join(set.Shell, " "))
+func printSettingsTo(out io.Writer, ser *settings.Server, set *settings.Settings, auther auth.Auther) error {
+	var output strings.Builder
+	// Formatting into an in-memory builder cannot produce an I/O error.
+	w := tabwriter.NewWriter(&output, 0, 0, 2, ' ', 0)
 
-	fmt.Fprintln(w, "\nBranding:")
-	fmt.Fprintf(w, "\tName:\t%s\n", set.Branding.Name)
-	fmt.Fprintf(w, "\tFiles override:\t%s\n", set.Branding.Files)
-	fmt.Fprintf(w, "\tDisable external links:\t%t\n", set.Branding.DisableExternal)
-	fmt.Fprintf(w, "\tDisable used disk percentage graph:\t%t\n", set.Branding.DisableUsedPercentage)
-	fmt.Fprintf(w, "\tColor:\t%s\n", set.Branding.Color)
-	fmt.Fprintf(w, "\tTheme:\t%s\n", set.Branding.Theme)
+	_, _ = fmt.Fprintf(w, "Sign up:\t%t\n", set.Signup)
+	_, _ = fmt.Fprintf(w, "Hide Login Button:\t%t\n", set.HideLoginButton)
+	_, _ = fmt.Fprintf(w, "Create User Dir:\t%t\n", set.CreateUserDir)
+	_, _ = fmt.Fprintf(w, "Logout Page:\t%s\n", set.LogoutPage)
+	_, _ = fmt.Fprintf(w, "Minimum Password Length:\t%d\n", set.MinimumPasswordLength)
+	_, _ = fmt.Fprintf(w, "Auth Method:\t%s\n", set.AuthMethod)
+	_, _ = fmt.Fprintf(w, "Shell:\t%s\t\n", strings.Join(set.Shell, " "))
 
-	fmt.Fprintln(w, "\nServer:")
-	fmt.Fprintf(w, "\tLog:\t%s\n", ser.Log)
-	fmt.Fprintf(w, "\tPort:\t%s\n", ser.Port)
-	fmt.Fprintf(w, "\tBase URL:\t%s\n", ser.BaseURL)
-	fmt.Fprintf(w, "\tRoot:\t%s\n", ser.Root)
-	fmt.Fprintf(w, "\tSocket:\t%s\n", ser.Socket)
-	fmt.Fprintf(w, "\tAddress:\t%s\n", ser.Address)
-	fmt.Fprintf(w, "\tTLS Cert:\t%s\n", ser.TLSCert)
-	fmt.Fprintf(w, "\tTLS Key:\t%s\n", ser.TLSKey)
-	fmt.Fprintf(w, "\tToken Expiration Time:\t%s\n", ser.TokenExpirationTime)
-	fmt.Fprintf(w, "\tExec Enabled:\t%t\n", ser.EnableExec)
-	fmt.Fprintf(w, "\tThumbnails Enabled:\t%t\n", ser.EnableThumbnails)
-	fmt.Fprintf(w, "\tResize Preview:\t%t\n", ser.ResizePreview)
-	fmt.Fprintf(w, "\tType Detection by Header:\t%t\n", ser.TypeDetectionByHeader)
-	fmt.Fprintf(w, "\tFollow External Symlinks:\t%t\n", ser.FollowExternalSymlinks)
+	_, _ = fmt.Fprintln(w, "\nBranding:")
+	_, _ = fmt.Fprintf(w, "\tName:\t%s\n", set.Branding.Name)
+	_, _ = fmt.Fprintf(w, "\tFiles override:\t%s\n", set.Branding.Files)
+	_, _ = fmt.Fprintf(w, "\tDisable external links:\t%t\n", set.Branding.DisableExternal)
+	_, _ = fmt.Fprintf(w, "\tDisable used disk percentage graph:\t%t\n", set.Branding.DisableUsedPercentage)
+	_, _ = fmt.Fprintf(w, "\tColor:\t%s\n", set.Branding.Color)
+	_, _ = fmt.Fprintf(w, "\tTheme:\t%s\n", set.Branding.Theme)
 
-	fmt.Fprintln(w, "\nTUS:")
-	fmt.Fprintf(w, "\tChunk size:\t%d\n", set.Tus.ChunkSize)
-	fmt.Fprintf(w, "\tRetry count:\t%d\n", set.Tus.RetryCount)
+	_, _ = fmt.Fprintln(w, "\nServer:")
+	_, _ = fmt.Fprintf(w, "\tLog:\t%s\n", ser.Log)
+	_, _ = fmt.Fprintf(w, "\tPort:\t%s\n", ser.Port)
+	_, _ = fmt.Fprintf(w, "\tBase URL:\t%s\n", ser.BaseURL)
+	_, _ = fmt.Fprintf(w, "\tRoot:\t%s\n", ser.Root)
+	_, _ = fmt.Fprintf(w, "\tSocket:\t%s\n", ser.Socket)
+	_, _ = fmt.Fprintf(w, "\tAddress:\t%s\n", ser.Address)
+	_, _ = fmt.Fprintf(w, "\tTLS Cert:\t%s\n", ser.TLSCert)
+	_, _ = fmt.Fprintf(w, "\tTLS Key:\t%s\n", ser.TLSKey)
+	_, _ = fmt.Fprintf(w, "\tToken Expiration Time:\t%s\n", ser.TokenExpirationTime)
+	_, _ = fmt.Fprintf(w, "\tExec Enabled:\t%t\n", ser.EnableExec)
+	_, _ = fmt.Fprintf(w, "\tThumbnails Enabled:\t%t\n", ser.EnableThumbnails)
+	_, _ = fmt.Fprintf(w, "\tResize Preview:\t%t\n", ser.ResizePreview)
+	_, _ = fmt.Fprintf(w, "\tType Detection by Header:\t%t\n", ser.TypeDetectionByHeader)
+	_, _ = fmt.Fprintf(w, "\tFollow External Symlinks:\t%t\n", ser.FollowExternalSymlinks)
 
-	fmt.Fprintln(w, "\nDefaults:")
-	fmt.Fprintf(w, "\tScope:\t%s\n", set.Defaults.Scope)
-	fmt.Fprintf(w, "\tDateFormat:\t%t\n", set.Defaults.DateFormat)
-	fmt.Fprintf(w, "\tHideDotfiles:\t%t\n", set.Defaults.HideDotfiles)
-	fmt.Fprintf(w, "\tLocale:\t%s\n", set.Defaults.Locale)
-	fmt.Fprintf(w, "\tView mode:\t%s\n", set.Defaults.ViewMode)
-	fmt.Fprintf(w, "\tSingle Click:\t%t\n", set.Defaults.SingleClick)
-	fmt.Fprintf(w, "\tRedirect after Copy/Move:\t%t\n", set.Defaults.RedirectAfterCopyMove)
-	fmt.Fprintf(w, "\tFile Creation Mode:\t%O\n", set.FileMode)
-	fmt.Fprintf(w, "\tDirectory Creation Mode:\t%O\n", set.DirMode)
-	fmt.Fprintf(w, "\tCommands:\t%s\n", strings.Join(set.Defaults.Commands, " "))
-	fmt.Fprintf(w, "\tAce editor syntax highlighting theme:\t%s\n", set.Defaults.AceEditorTheme)
+	_, _ = fmt.Fprintln(w, "\nTUS:")
+	_, _ = fmt.Fprintf(w, "\tChunk size:\t%d\n", set.Tus.ChunkSize)
+	_, _ = fmt.Fprintf(w, "\tRetry count:\t%d\n", set.Tus.RetryCount)
 
-	fmt.Fprintf(w, "\tSorting:\n")
-	fmt.Fprintf(w, "\t\tBy:\t%s\n", set.Defaults.Sorting.By)
-	fmt.Fprintf(w, "\t\tAsc:\t%t\n", set.Defaults.Sorting.Asc)
+	_, _ = fmt.Fprintln(w, "\nDefaults:")
+	_, _ = fmt.Fprintf(w, "\tScope:\t%s\n", set.Defaults.Scope)
+	_, _ = fmt.Fprintf(w, "\tDateFormat:\t%t\n", set.Defaults.DateFormat)
+	_, _ = fmt.Fprintf(w, "\tHideDotfiles:\t%t\n", set.Defaults.HideDotfiles)
+	_, _ = fmt.Fprintf(w, "\tLocale:\t%s\n", set.Defaults.Locale)
+	_, _ = fmt.Fprintf(w, "\tView mode:\t%s\n", set.Defaults.ViewMode)
+	_, _ = fmt.Fprintf(w, "\tSingle Click:\t%t\n", set.Defaults.SingleClick)
+	_, _ = fmt.Fprintf(w, "\tRedirect after Copy/Move:\t%t\n", set.Defaults.RedirectAfterCopyMove)
+	_, _ = fmt.Fprintf(w, "\tFile Creation Mode:\t%O\n", set.FileMode)
+	_, _ = fmt.Fprintf(w, "\tDirectory Creation Mode:\t%O\n", set.DirMode)
+	_, _ = fmt.Fprintf(w, "\tCommands:\t%s\n", strings.Join(set.Defaults.Commands, " "))
+	_, _ = fmt.Fprintf(w, "\tAce editor syntax highlighting theme:\t%s\n", set.Defaults.AceEditorTheme)
 
-	fmt.Fprintf(w, "\tPermissions:\n")
-	fmt.Fprintf(w, "\t\tAdmin:\t%t\n", set.Defaults.Perm.Admin)
-	fmt.Fprintf(w, "\t\tExecute:\t%t\n", set.Defaults.Perm.Execute)
-	fmt.Fprintf(w, "\t\tCreate:\t%t\n", set.Defaults.Perm.Create)
-	fmt.Fprintf(w, "\t\tRename:\t%t\n", set.Defaults.Perm.Rename)
-	fmt.Fprintf(w, "\t\tModify:\t%t\n", set.Defaults.Perm.Modify)
-	fmt.Fprintf(w, "\t\tDelete:\t%t\n", set.Defaults.Perm.Delete)
-	fmt.Fprintf(w, "\t\tShare:\t%t\n", set.Defaults.Perm.Share)
-	fmt.Fprintf(w, "\t\tDownload:\t%t\n", set.Defaults.Perm.Download)
+	_, _ = fmt.Fprintf(w, "\tSorting:\n")
+	_, _ = fmt.Fprintf(w, "\t\tBy:\t%s\n", set.Defaults.Sorting.By)
+	_, _ = fmt.Fprintf(w, "\t\tAsc:\t%t\n", set.Defaults.Sorting.Asc)
 
-	w.Flush()
+	_, _ = fmt.Fprintf(w, "\tPermissions:\n")
+	_, _ = fmt.Fprintf(w, "\t\tAdmin:\t%t\n", set.Defaults.Perm.Admin)
+	_, _ = fmt.Fprintf(w, "\t\tExecute:\t%t\n", set.Defaults.Perm.Execute)
+	_, _ = fmt.Fprintf(w, "\t\tCreate:\t%t\n", set.Defaults.Perm.Create)
+	_, _ = fmt.Fprintf(w, "\t\tRename:\t%t\n", set.Defaults.Perm.Rename)
+	_, _ = fmt.Fprintf(w, "\t\tModify:\t%t\n", set.Defaults.Perm.Modify)
+	_, _ = fmt.Fprintf(w, "\t\tDelete:\t%t\n", set.Defaults.Perm.Delete)
+	_, _ = fmt.Fprintf(w, "\t\tShare:\t%t\n", set.Defaults.Perm.Share)
+	_, _ = fmt.Fprintf(w, "\t\tDownload:\t%t\n", set.Defaults.Perm.Download)
+
+	if err := w.Flush(); err != nil {
+		return err
+	}
 
 	b, err := json.MarshalIndent(auther, "", "  ")
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\nAuther configuration (raw):\n\n%s\n\n", string(b))
-	return nil
+	_, _ = fmt.Fprintf(&output, "\nAuther configuration (raw):\n\n%s\n\n", string(b))
+	_, err = io.Copy(out, strings.NewReader(output.String()))
+	return err
 }
 
 func getSettings(flags *pflag.FlagSet, set *settings.Settings, ser *settings.Server, auther auth.Auther, all bool) (auth.Auther, error) {

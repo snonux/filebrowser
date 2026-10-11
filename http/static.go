@@ -152,7 +152,7 @@ func getStaticHandlers(store *storage.Storage, server *settings.Server, assetsFs
 		if err != nil {
 			return http.StatusNotFound, err
 		}
-		defer f.Close()
+		defer func(closeResource func() error) { _ = closeResource() }(f.Close) // Best-effort resource cleanup.
 
 		acceptEncoding := r.Header.Get("Accept-Encoding")
 		if strings.Contains(acceptEncoding, "gzip") {
@@ -167,7 +167,7 @@ func getStaticHandlers(store *storage.Storage, server *settings.Server, assetsFs
 			if err != nil {
 				return http.StatusInternalServerError, err
 			}
-			defer gzReader.Close()
+			defer func(closeResource func() error) { _ = closeResource() }(gzReader.Close) // Best-effort resource cleanup.
 
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 

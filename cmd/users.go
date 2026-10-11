@@ -3,8 +3,10 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -25,12 +27,18 @@ var usersCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 }
 
-func printUsers(usrs []*users.User) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tUsername\tScope\tLocale\tV. Mode\tS.Click\tRed. After C/M\tAdmin\tExecute\tCreate\tRename\tModify\tDelete\tShare\tDownload\tPwd Lock")
+func printUsers(usrs []*users.User) error {
+	return printUsersTo(os.Stdout, usrs)
+}
+
+func printUsersTo(out io.Writer, usrs []*users.User) error {
+	var output strings.Builder
+	// Formatting into an in-memory builder cannot produce an I/O error.
+	w := tabwriter.NewWriter(&output, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "ID\tUsername\tScope\tLocale\tV. Mode\tS.Click\tRed. After C/M\tAdmin\tExecute\tCreate\tRename\tModify\tDelete\tShare\tDownload\tPwd Lock")
 
 	for _, u := range usrs {
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%t\t%t\t%t\t%t\t%t\t%t\t%t\t%t\t%t\t%t\t%t\t\n",
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%t\t%t\t%t\t%t\t%t\t%t\t%t\t%t\t%t\t%t\t%t\t\n",
 			u.ID,
 			u.Username,
 			u.Scope,
@@ -50,7 +58,11 @@ func printUsers(usrs []*users.User) {
 		)
 	}
 
-	w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	_, err := io.Copy(out, strings.NewReader(output.String()))
+	return err
 }
 
 func parseUsernameOrID(arg string) (username string, id uint) {

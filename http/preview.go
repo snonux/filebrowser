@@ -118,7 +118,7 @@ func createPreview(ctx context.Context, imgSvc ImgService, fileCache FileCache,
 	if err != nil {
 		return nil, err
 	}
-	defer fd.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(fd.Close) // Best-effort resource cleanup.
 
 	var (
 		width   int

@@ -278,7 +278,7 @@ func TestService_Resize(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			svc := New(1)
 			source := test.source(t)
-			defer source.Close()
+			defer func(closeResource func() error) { _ = closeResource() }(source.Close) // Best-effort resource cleanup.
 
 			buf := &bytes.Buffer{}
 			err := svc.Resize(context.Background(), source, test.width, test.height, buf, test.options...)

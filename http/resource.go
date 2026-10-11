@@ -53,7 +53,7 @@ var resourceGetHandler = withUser(func(w http.ResponseWriter, r *http.Request, d
 		if err != nil {
 			return errToStatus(err), err
 		}
-		defer f.Close()
+		defer func(closeResource func() error) { _ = closeResource() }(f.Close) // Read-only handle cleanup.
 
 		data, err := io.ReadAll(f)
 		if err != nil {
@@ -308,7 +308,7 @@ func resourcePatchHandler(fileCache FileCache) handleFunc {
 			if action == "copy" && (src == dst || os.SameFile(srcInfo, dstInfo)) {
 				return fmt.Errorf("%w: %w", fberrors.ErrInvalidRequestParams, fileutils.ErrSameFile)
 			}
-			if dstErr == nil && r.URL.Query().Get("override") != "true" && !(action == "rename" && os.SameFile(srcInfo, dstInfo)) {
+			if dstErr == nil && r.URL.Query().Get("override") != "true" && (action != "rename" || !os.SameFile(srcInfo, dstInfo)) {
 				return fberrors.ErrExist
 			}
 			return patchAction(r.Context(), action, src, dst, d)
@@ -350,9 +350,9 @@ func addVersionSuffix(source string, afs afero.Fs) string {
 	return source
 }
 
-func writeFile(afs afero.Fs, dst string, in io.Reader, fileMode, dirMode fs.FileMode) (os.FileInfo, error) {
+func writeFile(afs afero.Fs, dst string, in io.Reader, fileMode, dirMode fs.FileMode) (info os.FileInfo, err error) {
 	dir, _ := path.Split(dst)
-	err := afs.MkdirAll(dir, dirMode)
+	err = afs.MkdirAll(dir, dirMode)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +361,7 @@ func writeFile(afs afero.Fs, dst string, in io.Reader, fileMode, dirMode fs.File
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { err = errors.Join(err, file.Close()) }()
 
 	_, err = io.Copy(file, in)
 	if err != nil {
@@ -375,7 +375,7 @@ func writeFile(afs afero.Fs, dst string, in io.Reader, fileMode, dirMode fs.File
 	}
 
 	// Gets the info about the file.
-	info, err := file.Stat()
+	info, err = file.Stat()
 	if err != nil {
 		return nil, err
 	}

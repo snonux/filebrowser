@@ -54,6 +54,7 @@ var checkableFields = []string{
 }
 
 // Clean validates a user and initializes its filesystem when absent.
+//
 // Deprecated: use Validate for persisted data and BindFilesystem explicitly
 // when preparing a user to serve files.
 func (u *User) Clean(baseScope string, followExternalSymlinks bool, fields ...string) error {

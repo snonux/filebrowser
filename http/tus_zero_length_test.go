@@ -24,7 +24,7 @@ type shortLivedUploadCache struct {
 	expired  chan struct{}
 }
 
-func (c *shortLivedUploadCache) Register(ctx context.Context, key string, size int64, remove func() error) {
+func (c *shortLivedUploadCache) Register(_ context.Context, key string, size int64, remove func() error) {
 	c.mu.Lock()
 	c.removals = append(c.removals, remove)
 	c.mu.Unlock()
@@ -191,7 +191,7 @@ func TestTusZeroLengthHookHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func(closeResource func() error) { _ = closeResource() }(file.Close)
 	if _, err := file.WriteString("hook\n"); err != nil {
 		t.Fatal(err)
 	}

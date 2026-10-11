@@ -85,15 +85,15 @@ func newMemoryUploadCache() *memoryUploadCache {
 	return c
 }
 
-func (c *memoryUploadCache) Register(ctx context.Context, filePath string, fileSize int64, remove func() error) {
+func (c *memoryUploadCache) Register(_ context.Context, filePath string, fileSize int64, remove func() error) {
 	c.cache.Set(filePath, memoryUploadEntry{size: fileSize, remove: remove}, uploadCacheTTL)
 }
 
-func (c *memoryUploadCache) Complete(ctx context.Context, filePath string) {
+func (c *memoryUploadCache) Complete(_ context.Context, filePath string) {
 	c.cache.Delete(filePath)
 }
 
-func (c *memoryUploadCache) GetLength(ctx context.Context, filePath string) (int64, error) {
+func (c *memoryUploadCache) GetLength(_ context.Context, filePath string) (int64, error) {
 	item := c.cache.Get(filePath)
 	if item == nil {
 		return 0, fmt.Errorf("no active upload found for the given path")
@@ -101,7 +101,7 @@ func (c *memoryUploadCache) GetLength(ctx context.Context, filePath string) (int
 	return item.Value().size, nil
 }
 
-func (c *memoryUploadCache) Touch(ctx context.Context, filePath string) {
+func (c *memoryUploadCache) Touch(_ context.Context, filePath string) {
 	c.cache.Touch(filePath)
 }
 

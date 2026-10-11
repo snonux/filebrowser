@@ -249,7 +249,7 @@ user created with the credentials from options "username" and "password".`,
 			return err
 		}
 
-		defer listener.Close()
+		defer func(closeResource func() error) { _ = closeResource() }(listener.Close) // Best-effort resource cleanup.
 
 		log.Println("Listening on", listener.Addr().String())
 		srv := &http.Server{

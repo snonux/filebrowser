@@ -266,7 +266,7 @@ func TestSharePostHandlerValidatesLifetime(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if min := time.Now().Add(47 * time.Hour).Unix(); resp.Expire < min {
+	if minimumExpiry := time.Now().Add(47 * time.Hour).Unix(); resp.Expire < minimumExpiry {
 		t.Errorf("expected an expiry about two days ahead, got %d (now %d)", resp.Expire, time.Now().Unix())
 	}
 }

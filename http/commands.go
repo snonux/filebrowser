@@ -48,7 +48,7 @@ var commandsHandler = withUser(func(w http.ResponseWriter, r *http.Request, d *d
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	defer conn.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(conn.Close) // Best-effort resource cleanup.
 
 	// Refuse before reading anything: the route is registered even when command
 	// execution is disabled, so a user who may not run commands must not be able

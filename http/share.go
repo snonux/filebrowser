@@ -185,11 +185,6 @@ func (d *data) shareLocation(u *users.User, path string) string {
 	return location
 }
 
-// isPathWithin reports whether location is dir itself or lies below it.
-func isPathWithin(location, dir string) bool {
-	return resourceops.IsPathWithin(location, dir)
-}
-
 var shareDeleteHandler = withPermShare(func(_ http.ResponseWriter, r *http.Request, d *data) (int, error) {
 	hash := strings.TrimSuffix(r.URL.Path, "/")
 	hash = strings.TrimPrefix(hash, "/")
@@ -265,7 +260,7 @@ var sharePostHandler = withPermShare(func(w http.ResponseWriter, r *http.Request
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return http.StatusBadRequest, fmt.Errorf("failed to decode body: %w", err)
 		}
-		defer r.Body.Close()
+		defer func(closeResource func() error) { _ = closeResource() }(r.Body.Close) // Best-effort resource cleanup.
 	}
 
 	bytes := make([]byte, 6)

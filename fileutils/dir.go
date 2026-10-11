@@ -27,7 +27,7 @@ func CopyDir(afs afero.Fs, source, dest string, fileMode, dirMode fs.FileMode) e
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(dir.Close) // Best-effort resource cleanup.
 
 	obs, err := dir.Readdir(-1)
 	if err != nil {

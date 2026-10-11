@@ -94,7 +94,7 @@ func TestPublicShareSymlinkDescendantDisclosure(t *testing.T) {
 			handler.ServeHTTP(recorder, req)
 
 			result := recorder.Result()
-			defer result.Body.Close()
+			defer func(closeResource func() error) { _ = closeResource() }(result.Body.Close) // Best-effort resource cleanup.
 			body, _ := io.ReadAll(result.Body)
 
 			t.Logf("status=%d body=%q", result.StatusCode, string(body))
@@ -116,7 +116,7 @@ func TestPublicShareSymlinkListingOmitsEscapingLink(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 
 	result := recorder.Result()
-	defer result.Body.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(result.Body.Close) // Best-effort resource cleanup.
 	body, _ := io.ReadAll(result.Body)
 	if result.StatusCode != http.StatusOK {
 		t.Fatalf("share root listing failed: status=%d body=%q", result.StatusCode, string(body))
@@ -182,7 +182,7 @@ func TestPublicShareSymlinkFollowedWhenEnabled(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	handle(publicDlHandler, "", st, srv).ServeHTTP(recorder, req)
 	result := recorder.Result()
-	defer result.Body.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(result.Body.Close) // Best-effort resource cleanup.
 	body, _ := io.ReadAll(result.Body)
 	if result.StatusCode != http.StatusOK {
 		t.Fatalf("expected to download file behind followed symlink, got status=%d body=%q", result.StatusCode, string(body))
@@ -196,7 +196,7 @@ func TestPublicShareSymlinkFollowedWhenEnabled(t *testing.T) {
 	recorder = httptest.NewRecorder()
 	handle(publicShareHandler, "", st, srv).ServeHTTP(recorder, req)
 	result = recorder.Result()
-	defer result.Body.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(result.Body.Close) // Best-effort resource cleanup.
 	body, _ = io.ReadAll(result.Body)
 	if result.StatusCode != http.StatusOK {
 		t.Fatalf("share root listing failed: status=%d body=%q", result.StatusCode, string(body))
@@ -219,7 +219,7 @@ func TestPublicShareSymlinkArchiveDisclosure(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 
 	result := recorder.Result()
-	defer result.Body.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(result.Body.Close) // Best-effort resource cleanup.
 	body, _ := io.ReadAll(result.Body)
 	if result.StatusCode != http.StatusOK {
 		t.Fatalf("archive request failed: status=%d body=%q", result.StatusCode, string(body))
@@ -238,7 +238,7 @@ func TestPublicShareSymlinkArchiveDisclosure(t *testing.T) {
 			continue
 		}
 		content, _ := io.ReadAll(rc)
-		rc.Close()
+		_ = rc.Close() // Response body cleanup.
 		if bytes.Contains(content, []byte("symlink-secret")) {
 			t.Errorf("VULNERABLE: archive entry %q leaks out-of-scope content", f.Name)
 		}

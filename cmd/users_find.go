@@ -49,6 +49,5 @@ var findUsers = withStore(func(_ *cobra.Command, args []string, st *store) error
 	if err != nil {
 		return err
 	}
-	printUsers(list)
-	return nil
+	return printUsers(list)
 }, storeOptions{})

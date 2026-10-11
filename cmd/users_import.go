@@ -31,7 +31,7 @@ list or set it to 0.`,
 		if err != nil {
 			return err
 		}
-		defer fd.Close()
+		defer func(closeResource func() error) { _ = closeResource() }(fd.Close) // Best-effort resource cleanup.
 
 		list := []*users.User{}
 		err = unmarshal(args[0], &list)

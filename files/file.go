@@ -180,7 +180,7 @@ func (i *FileInfo) Checksum(algo string) error {
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(reader.Close) // Best-effort resource cleanup.
 
 	var h hash.Hash
 
@@ -331,7 +331,7 @@ func (i *FileInfo) readFirstBytes() []byte {
 		i.Type = "blob"
 		return nil
 	}
-	defer reader.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(reader.Close) // Best-effort resource cleanup.
 
 	buffer := make([]byte, 512)
 	n, err := reader.Read(buffer)

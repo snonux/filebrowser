@@ -56,7 +56,7 @@ func TestTusConcurrentPatchesCannotExceedUploadLength(t *testing.T) {
 				return
 			}
 			_, _ = io.Copy(io.Discard, res.Body)
-			res.Body.Close()
+			_ = res.Body.Close() // Response body cleanup.
 			statuses <- res.StatusCode
 		}()
 	}
@@ -102,14 +102,14 @@ func TestTusPatchLockIsReleased(t *testing.T) {
 
 	// A chunk at the wrong offset is rejected...
 	res, _ := f.patch(t, url, 512, payload[512:])
-	res.Body.Close()
+	_ = res.Body.Close() // Response body cleanup.
 	if res.StatusCode != http.StatusConflict {
 		t.Fatalf("PATCH at a wrong offset = %d, want 409", res.StatusCode)
 	}
 
 	// ...and the upload can still be written afterwards.
 	res, _ = f.patch(t, url, 0, payload)
-	res.Body.Close()
+	_ = res.Body.Close() // Response body cleanup.
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("PATCH after a rejected one = %d, want 204", res.StatusCode)
 	}

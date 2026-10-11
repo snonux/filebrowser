@@ -148,7 +148,7 @@ type cobraFunc func(cmd *cobra.Command, args []string) error
 // This function should only be used by [withStore] and the root command. No other command should call
 // this function directly.
 func withViperAndStore(fn func(cmd *cobra.Command, args []string, v *viper.Viper, store *store) error, options storeOptions) cobraFunc {
-	return func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) (err error) {
 		v, err := initViper(cmd)
 		if err != nil {
 			return err
@@ -177,7 +177,7 @@ func withViperAndStore(fn func(cmd *cobra.Command, args []string, v *viper.Viper
 		if err != nil {
 			return err
 		}
-		defer db.Close()
+		defer func() { err = errors.Join(err, db.Close()) }()
 
 		storage, err := bolt.NewStorage(db)
 		if err != nil {
@@ -199,12 +199,12 @@ func withStore(fn func(cmd *cobra.Command, args []string, store *store) error, o
 	}, options)
 }
 
-func marshal(filename string, data interface{}) error {
+func marshal(filename string, data interface{}) (err error) {
 	fd, err := os.Create(filename)
 	if err != nil {
 		return err
 	}
-	defer fd.Close()
+	defer func() { err = errors.Join(err, fd.Close()) }()
 
 	switch ext := filepath.Ext(filename); ext {
 	case ".json":
@@ -224,7 +224,7 @@ func unmarshal(filename string, data interface{}) error {
 	if err != nil {
 		return err
 	}
-	defer fd.Close()
+	defer func(closeResource func() error) { _ = closeResource() }(fd.Close) // Read-only handle cleanup.
 
 	switch ext := filepath.Ext(filename); ext {
 	case ".json":

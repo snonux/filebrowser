@@ -135,7 +135,7 @@ func TestPublicShareHandlerAuthentication(t *testing.T) {
 
 				handler.ServeHTTP(recorder, tc.req)
 				result := recorder.Result()
-				defer result.Body.Close()
+				defer func(closeResource func() error) { _ = closeResource() }(result.Body.Close) // Best-effort resource cleanup.
 				if result.StatusCode != tc.expectedStatusCode {
 					t.Errorf("expected status code %d, got status code %d", tc.expectedStatusCode, result.StatusCode)
 				}
@@ -246,7 +246,7 @@ func TestPublicShareHandlerRules(t *testing.T) {
 
 			handler.ServeHTTP(recorder, req)
 			result := recorder.Result()
-			defer result.Body.Close()
+			defer func(closeResource func() error) { _ = closeResource() }(result.Body.Close) // Best-effort resource cleanup.
 			if result.StatusCode != tc.expectedStatusCode {
 				t.Errorf("expected status code %d, got status code %d", tc.expectedStatusCode, result.StatusCode)
 			}

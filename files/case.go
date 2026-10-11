@@ -25,8 +25,8 @@ func CaseInsensitive(fs afero.Fs, root string) bool {
 	}
 
 	name := probe.Name()
-	probe.Close()
-	defer fs.Remove(name) //nolint:errcheck
+	_ = probe.Close()                      // The probe is empty; only its directory entry is inspected.
+	defer func() { _ = fs.Remove(name) }() // Best-effort removal of the temporary probe.
 
 	dir, base := filepath.Split(name)
 	_, err = fs.Stat(filepath.Join(dir, strings.ToUpper(base)))
