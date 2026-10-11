@@ -1,7 +1,7 @@
 name: filebrowser_android
 description: File Browser Android client
 publish_to: "none"
-version: 0.2.0+2
+version: 0.2.1+3
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
