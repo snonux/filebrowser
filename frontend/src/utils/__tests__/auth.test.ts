@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useAuthStore } from "@/stores/auth";
 import { login, logout, parseToken, renew, validateLogin } from "@/utils/auth";
-import { fetchURL } from "@/api/utils";
+import { fetchURL, setSafeTimeout } from "@/api/utils";
 import router from "@/router";
 
 vi.mock("@/router", () => ({ default: { push: vi.fn() } }));
@@ -11,17 +11,18 @@ vi.mock("@/i18n", () => ({
   detectLocale: () => "en",
   setLocale: vi.fn(),
 }));
-vi.mock("@/utils/constants", () => ({
+const authConfig = vi.hoisted(() => ({
   authMethod: "json",
   baseURL: "",
   noAuth: false,
   logoutPage: "/login",
 }));
+vi.mock("@/utils/constants", () => authConfig);
 
-function token(username: string, revision = 0) {
+function token(username: string, revision = 0, lifetimeSeconds = 3600) {
   const payload = {
     user: { id: username === "alice" ? 1 : 2, username, locale: "en" },
-    exp: Math.floor(Date.now() / 1000) + 3600,
+    exp: Math.floor(Date.now() / 1000) + lifetimeSeconds,
     revision,
   };
   return `${btoa("{}")}.${btoa(JSON.stringify(payload))}.signature`;
@@ -47,11 +48,195 @@ function expectSession(jwt: string, username?: string) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-11T00:00:00Z"));
   vi.clearAllMocks();
+  authConfig.authMethod = "json";
+  authConfig.logoutPage = "/login";
   setActivePinia(createPinia());
   localStorage.clear();
   document.cookie = "auth=; Max-Age=0; Path=/";
   vi.stubGlobal("fetch", vi.fn());
+});
+
+describe("authentication expiry ownership", () => {
+  it("cancels logout before another account logs in", () => {
+    parseToken(token("alice", 0, 10));
+    logout();
+    const replacement = token("bob", 0, 100);
+    parseToken(replacement);
+    vi.advanceTimersByTime(10_000);
+    expectSession(replacement, "bob");
+    expect(router.push).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(90_000);
+    expectSession("");
+    expect(router.push).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels expiry when an account is replaced directly", () => {
+    parseToken(token("alice", 0, 10));
+    const replacement = token("bob", 0, 100);
+    parseToken(replacement);
+    vi.advanceTimersByTime(10_000);
+    expectSession(replacement, "bob");
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("replaces the expiry deadline on renewal", async () => {
+    const old = token("alice", 0, 10);
+    parseToken(old);
+    const replacement = token("alice", 1, 100);
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(replacement));
+    await renew(old);
+    vi.advanceTimersByTime(10_000);
+    expectSession(replacement, "alice");
+    expect(router.push).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(90_000);
+    expectSession("");
+  });
+
+  it.each(["status", "fetch", "body", "token"])(
+    "keeps the original expiry after a replacement login fails at %s",
+    async (failure) => {
+      const old = token("alice", 0, 10);
+      parseToken(old);
+      vi.advanceTimersByTime(2_000);
+      if (failure === "fetch") {
+        vi.mocked(fetch).mockRejectedValueOnce(new Error("offline"));
+      } else {
+        const response =
+          failure === "status"
+            ? new Response("bad credentials", { status: 401 })
+            : new Response("invalid JWT");
+        if (failure === "body") {
+          vi.spyOn(response, "text").mockRejectedValue(
+            new Error("body failed")
+          );
+        }
+        vi.mocked(fetch).mockResolvedValueOnce(response);
+      }
+      await expect(login("bob", "wrong", "")).rejects.toBeInstanceOf(Error);
+      vi.advanceTimersByTime(7_000);
+      expectSession(old, "alice");
+      vi.advanceTimersByTime(1_000);
+      expectSession("");
+      expect(router.push).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("expires the active account while a replacement login is pending", async () => {
+    parseToken(token("alice", 0, 10));
+    const release = holdResponse();
+    const pending = login("bob", "password", "");
+    vi.advanceTimersByTime(10_000);
+    release(new Response(token("bob")));
+    await pending;
+    expectSession("");
+    expect(router.push).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["logout", "renewal", "account switch"])(
+    "cancels a long expiry after its first chunk on %s",
+    async (change) => {
+      const day = 86_400_000;
+      const old = token("alice", 0, (2 * day) / 1000);
+      parseToken(old);
+      vi.advanceTimersByTime(day);
+      if (change === "logout") logout();
+      const username = change === "renewal" ? "alice" : "bob";
+      const replacement = token(username, 1, (3 * day) / 1000);
+      if (change === "renewal") {
+        vi.mocked(fetch).mockResolvedValueOnce(new Response(replacement));
+        await renew(old);
+      } else {
+        parseToken(replacement);
+      }
+      vi.advanceTimersByTime(day);
+      expectSession(replacement, username);
+      expect(router.push).toHaveBeenCalledTimes(change === "logout" ? 1 : 0);
+    }
+  );
+
+  it("cancels the old expiry when proxy auth disables the replacement timeout", () => {
+    parseToken(token("alice", 0, 10));
+    authConfig.authMethod = "proxy";
+    authConfig.logoutPage = "/signed-out";
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const replacement = token("bob");
+    parseToken(replacement);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(10_000);
+    expectSession(replacement, "bob");
+    expect(router.push).not.toHaveBeenCalled();
+    warning.mockRestore();
+  });
+
+  it("cancels expiry when the store is cleared directly", () => {
+    parseToken(token("alice", 0, 10));
+    useAuthStore().clearUser();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(10_000);
+    expect(useAuthStore().isLoggedIn).toBe(false);
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("ignores a queued callback after same-token session replacement", () => {
+    const schedule = vi.spyOn(window, "setTimeout");
+    const jwt = token("alice", 0, 10);
+    parseToken(jwt);
+    const queued = schedule.mock.calls[0][0] as () => void;
+    logout();
+    parseToken(jwt);
+    queued();
+    expectSession(jwt, "alice");
+    expect(router.push).toHaveBeenCalledTimes(1);
+    schedule.mockRestore();
+  });
+});
+
+describe("safe timeout cancellation", () => {
+  it("keeps an infinite delay in cancellable bounded chunks", () => {
+    const callback = vi.fn();
+    const timeout = setSafeTimeout(callback, Infinity);
+    vi.advanceTimersByTime(86_400_000);
+    expect(callback).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+    timeout.cancel();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([-1000, 0, NaN])("runs a delay of %s once immediately", (delay) => {
+    const callback = vi.fn();
+    setSafeTimeout(callback, delay);
+    vi.advanceTimersByTime(0);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("runs once at the full long deadline", () => {
+    const callback = vi.fn();
+    const day = 86_400_000;
+    setSafeTimeout(callback, 2 * day + 10);
+    vi.advanceTimersByTime(2 * day + 9);
+    expect(callback).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels the current chunk and suppresses an already queued chunk", () => {
+    const schedule = vi.spyOn(window, "setTimeout");
+    const callback = vi.fn();
+    const day = 86_400_000;
+    const timeout = setSafeTimeout(callback, 2 * day + 10);
+    vi.advanceTimersByTime(day);
+    const queued = schedule.mock.calls[1][0] as () => void;
+    timeout.cancel();
+    timeout.cancel();
+    queued();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(2 * day);
+    expect(callback).not.toHaveBeenCalled();
+    schedule.mockRestore();
+  });
 });
 
 afterEach(() => {

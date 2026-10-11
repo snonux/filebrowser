@@ -39,6 +39,7 @@ export function parseToken(token: string) {
   const authStore = useAuthStore();
   authStore.jwt = token;
   authStore.setUser(data.user);
+  authStore.setLogoutTimer(null);
 
   // proxy auth with custom logout subject to unknown external timeout
   if (logoutPage !== "/login" && authMethod === "proxy") {
@@ -46,14 +47,12 @@ export function parseToken(token: string) {
     return;
   }
 
-  if (authStore.logoutTimer) {
-    clearTimeout(authStore.logoutTimer);
-  }
-
   const expiresAt = new Date(data.exp! * 1000);
   const timeout = expiresAt.getTime() - Date.now();
   authStore.setLogoutTimer(
     setSafeTimeout(() => {
+      // The timer owns this installed token until canceled; a failed login
+      // attempt can change request generations while this token stays active.
       logout("inactivity");
     }, timeout)
   );

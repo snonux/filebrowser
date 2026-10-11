@@ -1,13 +1,14 @@
 import { defineStore } from "pinia";
 import { detectLocale, setLocale } from "@/i18n";
 import { cloneDeep } from "lodash-es";
+import type { SafeTimeout } from "@/api/utils";
 
 export const useAuthStore = defineStore("auth", {
   // convert to a function
   state: (): {
     user: IUser | null;
     jwt: string;
-    logoutTimer: number | null;
+    logoutTimer: SafeTimeout | null;
   } => ({
     user: null,
     jwt: "",
@@ -37,9 +38,11 @@ export const useAuthStore = defineStore("auth", {
     },
     // easily reset state using `$reset`
     clearUser() {
+      this.setLogoutTimer(null);
       this.$reset();
     },
-    setLogoutTimer(logoutTimer: number | null) {
+    setLogoutTimer(logoutTimer: SafeTimeout | null) {
+      this.logoutTimer?.cancel();
       this.logoutTimer = logoutTimer;
     },
   },
