@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -343,7 +344,12 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 	// PATCH could stream arbitrary data to disk regardless of the length the
 	// client declared when the upload was created.
 	remaining := uploadLength - uploadOffset
-	bytesWritten, err := io.Copy(openFile, io.LimitReader(r.Body, remaining+1))
+	readLimit := remaining
+	// Saturate the lookahead limit so a valid MaxInt64 length cannot wrap.
+	if readLimit < math.MaxInt64 {
+		readLimit++
+	}
+	bytesWritten, err := io.Copy(openFile, io.LimitReader(r.Body, readLimit))
 	if err != nil {
 		return http.StatusInternalServerError, fmt.Errorf("could not write to file: %w", err)
 	}
