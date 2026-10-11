@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/filebrowser_api.dart';
@@ -30,6 +28,22 @@ class Session {
 class SessionController extends AsyncNotifier<Session?> {
   CredentialStore get _store => ref.read(credentialStoreProvider);
 
+  int _generation = 0;
+  int _loginAttempt = 0;
+  Future<void> _storageOperations = Future.value();
+
+  // Keep credential reads/writes and account preference changes in order.
+  // A write already underway may finish after logout starts; logout must then
+  // clear it before completing, rather than racing it in secure storage.
+  Future<T> _serialize<T>(Future<T> Function() operation) {
+    final result = _storageOperations.then((_) => operation());
+    _storageOperations = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
+  }
+
+  bool _isCurrent(FileBrowserApi api, int generation) =>
+      generation == _generation && identical(state.valueOrNull?.api, api);
+
   /// The most recent signed-in session, kept after a logout.
   Session? lastSession;
 
@@ -42,9 +56,24 @@ class SessionController extends AsyncNotifier<Session?> {
 
   @override
   Future<Session?> build() async {
-    final prefs = ref.read(preferencesProvider);
+    final generation = ++_generation;
+    ++_loginAttempt;
+    ref.onDispose(() {
+      ++_generation;
+      ++_loginAttempt;
+    });
+    final store = _store;
+    final snapshot = await _serialize(() async {
+      // Read settings only after a queued account switch has finished writing
+      // both stores. Check before using ref in case this build was disposed.
+      if (generation != _generation) return null;
+      final prefs = ref.read(preferencesProvider);
+      final creds = await store.read();
+      return (prefs, creds);
+    });
+    if (generation != _generation || snapshot == null) return null;
+    final (prefs, creds) = snapshot;
     if (prefs.serverUrl.isEmpty || prefs.username.isEmpty) return null;
-    final creds = await _store.read();
     final token = creds.token;
     if (token == null) return null;
     final TokenClaims claims;
@@ -57,6 +86,7 @@ class SessionController extends AsyncNotifier<Session?> {
     // first request then gets a 401 and logs in again.
     if (claims.isExpired && creds.password == null) return null;
     final api = _createApi(
+      generation: generation,
       serverUrl: prefs.serverUrl,
       username: prefs.username,
       proxyUsername: prefs.proxyUsername,
@@ -66,6 +96,7 @@ class SessionController extends AsyncNotifier<Session?> {
   }
 
   FileBrowserApi _createApi({
+    required int generation,
     required String serverUrl,
     required String username,
     required String proxyUsername,
@@ -77,33 +108,42 @@ class SessionController extends AsyncNotifier<Session?> {
       basicAuth: proxyUsername.isEmpty
           ? null
           : BasicAuth(proxyUsername, proxyPassword ?? ''),
-      onTokenRenewed: (token) => _tokenChanged(api, token),
-      reauthenticate: () => _reauthenticate(api, username),
+      onTokenRenewed: (token) => _tokenChanged(api, generation, token),
+      reauthenticate: () => _reauthenticate(api, generation, username),
     );
     return api;
   }
 
-  void _tokenChanged(FileBrowserApi api, String token) {
-    unawaited(_store.writeToken(token));
-    final current = state.valueOrNull;
-    if (current != null && identical(current.api, api)) {
-      state = AsyncData(Session(api: api, user: TokenClaims.parse(token).user));
-    }
+  Future<bool> _tokenChanged(
+      FileBrowserApi api, int generation, String token) async {
+    if (!_isCurrent(api, generation)) return false;
+    final user = TokenClaims.parse(token).user;
+    final store = _store;
+    return _serialize(() async {
+      if (!_isCurrent(api, generation)) return false;
+      await store.writeToken(token);
+      if (!_isCurrent(api, generation)) return false;
+      state = AsyncData(Session(api: api, user: user));
+      return true;
+    });
   }
 
-  Future<String?> _reauthenticate(FileBrowserApi api, String username) async {
-    final password = (await _store.read()).password;
+  Future<String?> _reauthenticate(
+      FileBrowserApi api, int generation, String username) async {
+    if (!_isCurrent(api, generation)) return null;
+    final store = _store;
+    final password = (await _serialize(store.read)).password;
+    if (!_isCurrent(api, generation)) return null;
     if (password != null) {
       try {
         final token = await api.login(username, password);
-        _tokenChanged(api, token);
-        return token;
+        return await _tokenChanged(api, generation, token) ? token : null;
       } on ApiException catch (e) {
         // Keep the session when the server is just unreachable.
         if (e.statusCode == null) return null;
       }
     }
-    if (identical(state.valueOrNull?.api, api)) await logout();
+    if (_isCurrent(api, generation)) await logout();
     return null;
   }
 
@@ -116,31 +156,53 @@ class SessionController extends AsyncNotifier<Session?> {
     String proxyUsername = '',
     String proxyPassword = '',
   }) async {
+    final attempt = ++_loginAttempt;
+    // A failed sign-in must leave an existing session usable. Invalidate that
+    // session only after authentication succeeds, before persisting the switch.
+    final generation = _generation + 1;
+    final store = _store;
+    final preferences = ref.read(preferencesProvider.notifier);
     final api = _createApi(
+      generation: generation,
       serverUrl: serverUrl,
       username: username,
       proxyUsername: proxyUsername,
       proxyPassword: proxyPassword,
     );
     final token = await api.login(username, password);
-    await ref.read(preferencesProvider.notifier).setServer(
-          serverUrl: api.baseUrl,
-          username: username,
-          proxyUsername: proxyUsername,
-        );
-    await _store.write(StoredCredentials(
-      token: token,
-      password: stayLoggedIn ? password : null,
-      proxyPassword: proxyUsername.isEmpty ? null : proxyPassword,
-    ));
-    state = AsyncData(Session(api: api, user: TokenClaims.parse(token).user));
+    if (attempt != _loginAttempt) return;
+    final user = TokenClaims.parse(token).user;
+    ++_generation;
+    await _serialize(() async {
+      if (generation != _generation) return;
+      await preferences.setServer(
+        serverUrl: api.baseUrl,
+        username: username,
+        proxyUsername: proxyUsername,
+      );
+      // Once preferences have started changing, finish the credential pair.
+      // A queued logout/new login will clear or replace it, and a provider
+      // rebuild waits for this operation before restoring either account.
+      await store.write(StoredCredentials(
+        token: token,
+        password: stayLoggedIn ? password : null,
+        proxyPassword: proxyUsername.isEmpty ? null : proxyPassword,
+      ));
+      if (generation != _generation) return;
+      state = AsyncData(Session(api: api, user: user));
+    });
   }
 
   /// Forgets the token and password; the server and username stay prefilled.
   Future<void> logout() async {
-    final creds = await _store.read();
-    await _store.write(StoredCredentials(proxyPassword: creds.proxyPassword));
+    ++_generation;
+    ++_loginAttempt;
+    final store = _store;
     state = const AsyncData(null);
+    await _serialize(() async {
+      final creds = await store.read();
+      await store.write(StoredCredentials(proxyPassword: creds.proxyPassword));
+    });
   }
 }
 

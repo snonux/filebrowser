@@ -89,7 +89,7 @@ class FileBrowserApi {
   /// Server address without a trailing slash, e.g. `https://host/files`.
   final String baseUrl;
   final BasicAuth? basicAuth;
-  final void Function(String token)? onTokenRenewed;
+  final FutureOr<void> Function(String token)? onTokenRenewed;
   final Reauthenticate? reauthenticate;
   final Dio _dio;
 
@@ -160,7 +160,7 @@ class FileBrowserApi {
       );
       final fresh = _checkToken(res.data);
       token = fresh;
-      onTokenRenewed?.call(fresh);
+      await onTokenRenewed?.call(fresh);
       return fresh;
     }).whenComplete(() => _renewing = null);
   }
