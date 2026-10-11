@@ -96,5 +96,28 @@ FB_E2E_DEVICE=emulator-5554 test/e2e/run_e2e.sh
 
 The script then points the app at `10.0.2.2`, the emulator's address for the
 host. If port 18080 or 18081 is taken on the host, set `FB_E2E_PORT` and
-`FB_E2E_PROXY_PORT`. `FB_E2E_SHOTS` only works for the Linux build, because
-the screenshots are written by the app itself.
+`FB_E2E_PROXY_PORT`. Screenshots are written by the app itself: on Android,
+set `FB_E2E_SHOTS` to a writable app directory and copy the images using
+`adb exec-out run-as org.buetow.filebrowser` while the test is running.
+Flutter removes the test app and its files when the run finishes.
+
+For a deployed test instance, run:
+
+```sh
+flutter test integration_test/app_test.dart -d emulator-5554 \
+  --dart-define-from-file=/path/to/private-defines.json
+```
+
+The defines file supplies `FB_E2E_URL`, `FB_E2E_ADMIN_USER`,
+`FB_E2E_ADMIN_PASS`, `FB_E2E_VIEWER_USER`, `FB_E2E_VIEWER_PASS`,
+`FB_E2E_PROXY_URL`, `FB_E2E_PROXY_USER`, and `FB_E2E_PROXY_PASS`.
+The username defaults are `admin` and `viewer`. Use dedicated test scopes
+with the fixtures from `test/e2e/run_e2e.sh`; the tests modify files and
+share links. The server's HTTPS certificate must be trusted by Android.
+
+`integration_test/deployed_features_test.dart` runs additional GUI checks
+with the same defines: protected shares, multi-select copy, move conflicts,
+cancelled deletion, pull refresh, editor discard, all themes, native video
+seeking, PDF page navigation, image pinch zoom, upload replacement cancellation,
+and checksum copying. Add a playable `media/clip.mp4` to the seeded fixtures
+before running it.

@@ -28,6 +28,10 @@ import 'package:video_player/video_player.dart';
 
 const serverUrl = String.fromEnvironment('FB_E2E_URL');
 const proxyUrl = String.fromEnvironment('FB_E2E_PROXY_URL');
+const adminUser =
+    String.fromEnvironment('FB_E2E_ADMIN_USER', defaultValue: 'admin');
+const viewerUser =
+    String.fromEnvironment('FB_E2E_VIEWER_USER', defaultValue: 'viewer');
 const adminPass = String.fromEnvironment('FB_E2E_ADMIN_PASS');
 const viewerPass = String.fromEnvironment('FB_E2E_VIEWER_PASS');
 const proxyUser = String.fromEnvironment('FB_E2E_PROXY_USER');
@@ -113,11 +117,10 @@ Future<void> waitFor(WidgetTester tester, Finder finder,
       .map((e) => (e.widget as Text).data)
       .whereType<String>()
       .join(' | ');
-  final fields = find
-      .byType(EditableText)
-      .evaluate()
-      .map((e) => (e.widget as EditableText).controller.text)
-      .join(' | ');
+  final fields = find.byType(EditableText).evaluate().map((e) {
+    final field = e.widget as EditableText;
+    return field.obscureText ? '[redacted]' : field.controller.text;
+  }).join(' | ');
   throw TestFailure('Timed out waiting for $finder\n'
       'Visible texts: $texts\nText fields: $fields');
 }
@@ -232,7 +235,7 @@ void main() {
   setUpAll(() async {
     expect(serverUrl, isNotEmpty, reason: 'Run via test/e2e/run_e2e.sh');
     admin = FileBrowserApi(baseUrl: serverUrl);
-    await admin.login('admin', adminPass);
+    await admin.login(adminUser, adminPass);
     device = FakeDeviceFiles(await Directory.systemTemp.createTemp('fb-e2e'));
   });
 
@@ -247,14 +250,14 @@ void main() {
 
     // -- Login errors ---------------------------------------------------------
     await login(tester,
-        url: serverUrl, user: 'admin', password: 'wrong-password');
+        url: serverUrl, user: adminUser, password: 'wrong-password');
     await waitFor(tester, find.text('Wrong username or password'));
     await screenshot(tester, '1-login');
-    await login(tester, url: proxyUrl, user: 'admin', password: adminPass);
+    await login(tester, url: proxyUrl, user: adminUser, password: adminPass);
     await waitFor(tester, find.textContaining('Turn on "Proxy login"'));
 
     // -- Login and listing ----------------------------------------------------
-    await login(tester, url: serverUrl, user: 'admin', password: adminPass);
+    await login(tester, url: serverUrl, user: adminUser, password: adminPass);
     await waitFor(tester, find.text('readme.md'));
     expect(find.text('photos'), findsOneWidget);
     expect(find.text('projects'), findsOneWidget);
@@ -583,6 +586,7 @@ void main() {
     await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
     await waitFor(tester, find.text('Create link'));
     await tapText(tester, 'Cancel');
+    await tester.pumpAndSettle();
 
     await tap(tester, find.byTooltip('Open navigation menu'));
     await tapText(tester, 'Share links');
@@ -608,7 +612,7 @@ void main() {
     // the app has swapped the login token for a renewed one by now.
     final renewed = (await store.read()).token!;
     expect(renewed, isNot(loginToken));
-    expect(TokenClaims.parse(renewed).user.username, 'admin');
+    expect(TokenClaims.parse(renewed).user.username, adminUser);
 
     // -- Session restore across an app restart --------------------------------
     final tokenBefore = (await store.read()).token;
@@ -620,6 +624,10 @@ void main() {
     // A token the server rejects is replaced by logging in again with the
     // remembered password.
     final bad = '${tokenBefore!.substring(0, tokenBefore.length - 4)}AAAA';
+    // Dispose the old session before replacing its persisted token: an
+    // in-flight renewal must not race the simulated restart.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
     await store.writeToken(bad);
     await launch(tester);
     await waitFor(tester, find.text('readme.md'));
@@ -640,10 +648,12 @@ void main() {
       (tester) async {
     await launch(tester);
     await login(tester,
-        url: serverUrl, user: 'admin', password: adminPass, stay: false);
+        url: serverUrl, user: adminUser, password: adminPass, stay: false);
     await waitFor(tester, find.text('readme.md'));
     expect((await store.read()).password, isNull);
     final token = (await store.read()).token!;
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
     await store.writeToken('${token.substring(0, token.length - 4)}AAAA');
     await launch(tester);
     await waitFor(tester, find.text('Sign in'));
@@ -651,7 +661,7 @@ void main() {
 
   testWidgets('read-only account sees no write actions', (tester) async {
     await launch(tester);
-    await login(tester, url: serverUrl, user: 'viewer', password: viewerPass);
+    await login(tester, url: serverUrl, user: viewerUser, password: viewerPass);
     await waitFor(tester, find.text('readme.md'));
     expect(find.byTooltip('Add'), findsNothing);
     await tap(tester, find.byTooltip('Actions for readme.md'));
@@ -682,12 +692,12 @@ void main() {
     await tap(tester, find.widgetWithText(SwitchListTile, 'Proxy login'));
     await enter(tester, 'Proxy username', proxyUser);
     await enter(tester, 'Proxy password', 'wrong');
-    await login(tester, url: proxyUrl, user: 'admin', password: adminPass);
+    await login(tester, url: proxyUrl, user: adminUser, password: adminPass);
     await waitFor(
         tester, find.text('The proxy rejected its username or password'));
 
     await enter(tester, 'Proxy password', proxyPass);
-    await login(tester, url: proxyUrl, user: 'admin', password: adminPass);
+    await login(tester, url: proxyUrl, user: adminUser, password: adminPass);
     await waitFor(tester, find.text('readme.md'));
     expect(prefs.getString('proxyUsername'), proxyUser);
     expect((await store.read()).proxyPassword, proxyPass);
