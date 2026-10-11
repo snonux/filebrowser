@@ -51,6 +51,7 @@ import { useLayoutStore } from "@/stores/layout";
 
 import { commands } from "@/api";
 import { throttle } from "lodash-es";
+import { reactive } from "vue";
 import { theme } from "@/utils/constants";
 
 export default {
@@ -163,9 +164,9 @@ export default {
       this.canInput = false;
       event.target.innerHTML = "";
 
-      const results = {
+      const results = reactive({
         text: `${cmd}\n\n`,
-      };
+      });
 
       this.history.push(cmd);
       this.historyPos = this.history.length;
