@@ -186,6 +186,72 @@ func TestMoveFileFallbackCopiesDistinctFile(t *testing.T) {
 	}
 }
 
+func TestMoveFileFallbackCallback(t *testing.T) {
+	for _, kind := range []string{"native", "fallback", "callback error", "same file"} {
+		t.Run(kind, func(t *testing.T) {
+			afs := afero.Fs(files.NewScopedFs(afero.NewOsFs(), t.TempDir()))
+			if err := afero.WriteFile(afs, "/source", []byte("saved"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := afero.WriteFile(afs, "/dest", []byte("original"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if kind != "native" {
+				afs = failingRenameFs{Fs: afs}
+			}
+			dest := "/dest"
+			if kind == "same file" {
+				dest = "/source"
+			}
+			called := false
+			callbackErr := errors.New("abort copy")
+			err := MoveFileWithFallback(afs, "/source", dest, 0o600, 0o755, func() error {
+				called = true
+				// The callback runs before destination truncation or source removal.
+				for path, want := range map[string]string{"/source": "saved", "/dest": "original"} {
+					content, err := afero.ReadFile(afs, path)
+					if err != nil || string(content) != want {
+						t.Fatalf("callback saw changed %s: %q, %v", path, content, err)
+					}
+				}
+				if kind == "callback error" {
+					return callbackErr
+				}
+				return nil
+			})
+			if called != (kind == "fallback" || kind == "callback error") {
+				t.Fatalf("callback called = %v", called)
+			}
+			if kind == "callback error" || kind == "same file" {
+				wantErr := callbackErr
+				if kind == "same file" {
+					wantErr = ErrSameFile
+				}
+				if !errors.Is(err, wantErr) {
+					t.Fatalf("move = %v, want %v", err, wantErr)
+				}
+				for path, want := range map[string]string{"/source": "saved", "/dest": "original"} {
+					content, err := afero.ReadFile(afs, path)
+					if err != nil || string(content) != want {
+						t.Fatalf("failed move changed %s: %q, %v", path, content, err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			content, err := afero.ReadFile(afs, "/dest")
+			if err != nil || string(content) != "saved" {
+				t.Fatalf("move destination = %q, %v", content, err)
+			}
+			if _, err := afs.Stat("/source"); !os.IsNotExist(err) {
+				t.Fatalf("move source retained: %v", err)
+			}
+		})
+	}
+}
+
 func TestCommonPrefix(t *testing.T) {
 	testCases := map[string]struct {
 		paths []string

@@ -1,6 +1,7 @@
 package fbhttp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -34,27 +35,45 @@ func drainRequestBody(r *http.Request) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, maxPatchDrainBytes))
 }
 
-// keepUploadActive periodically touches the cache entry to prevent eviction during transfer
-func keepUploadActive(cache UploadCache, filePath string) func() {
-	stop := make(chan bool)
-
+// keepUploadActive refreshes an admitted upload while waiting for a mutation
+// lock and transferring data. Retirement and cancellation stop the worker even
+// if the handler is still waiting for the lock.
+func keepUploadActive(ctx context.Context, cache UploadCache, cacheKey, key string, generation *uploadGeneration) func() {
+	if _, local := cache.(interface{ uploadCacheOwner() *memoryUploadCache }); local && generation == nil {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	touch := func() bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		if !patchGenerationCurrent(key, generation) {
+			return false
+		}
+		cache.Touch(cacheKey)
+		return true
+	}
+	// Refresh before blocking, rather than waiting for the first tick.
+	if !touch() {
+		return func() {}
+	}
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
-
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-stop:
 				return
 			case <-ticker.C:
-				cache.Touch(filePath)
+				if !touch() {
+					return
+				}
 			}
 		}
 	}()
-
-	return func() {
-		close(stop)
-	}
+	return func() { close(stop) }
 }
 
 // tusPatchesInFlight holds the uploads that currently have a PATCH being
@@ -93,6 +112,10 @@ func tusPostHandler(cache UploadCache) handleFunc {
 		if uploadLength < 0 {
 			return http.StatusBadRequest, fmt.Errorf("upload length must not be negative")
 		}
+
+		uploadMutations.barrier.Lock()
+		defer uploadMutations.barrier.Unlock()
+		key := uploadLockKey(d, r.URL.Path)
 
 		file, err := files.NewFileInfo(&files.FileOptions{
 			Fs:         d.user.Fs,
@@ -135,6 +158,7 @@ func tusPostHandler(cache UploadCache) handleFunc {
 			fileFlags |= os.O_TRUNC
 		}
 
+		retireUpload(key)
 		openFile, err := d.user.Fs.OpenFile(r.URL.Path, fileFlags, d.settings.FileMode)
 		if err != nil {
 			return errToStatus(err), err
@@ -154,13 +178,11 @@ func tusPostHandler(cache UploadCache) handleFunc {
 			return errToStatus(err), err
 		}
 
-		// Enables the user to utilize the PATCH endpoint for uploading file data.
-		// The removal callback deletes an abandoned upload through the user's
-		// scoped filesystem, so eviction cannot follow a symlink out of scope.
-		uploadPath := r.URL.Path
-		cache.Register(file.RealPath(), uploadLength, func() error {
-			return d.user.Fs.Remove(uploadPath)
-		})
+		owned, err := openFile.Stat()
+		if err != nil {
+			return errToStatus(err), err
+		}
+		registerOwnedUpload(cache, key, uploadPathKey(d, r.URL.Path), file.RealPath(), uploadLength, d.user.Fs, r.URL.Path, owned)
 
 		basePath := "/" + strings.Trim(strings.TrimSpace(d.server.BaseURL), "/")
 		if basePath == "/" {
@@ -229,52 +251,50 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 		return http.StatusBadRequest, fmt.Errorf("invalid upload offset")
 	}
 
-	// Taken before the file is stat-ed, so the size the offset is compared
-	// against cannot change until this chunk has been written.
-	unlock, ok := lockUpload(uploadLockKey(d, r.URL.Path))
+	// Admit one PATCH before inspecting the upload. The mutation lock below
+	// protects the final offset check and append from other file operations.
+	originalKey := uploadLockKey(d, r.URL.Path)
+	unlock, ok := lockUpload(originalKey)
 	if !ok {
 		return http.StatusLocked, fmt.Errorf("another chunk of %s is being written", r.URL.Path)
 	}
 	defer unlock()
-
-	file, err := files.NewFileInfo(&files.FileOptions{
-		Fs:         d.user.Fs,
-		Path:       r.URL.Path,
-		Modify:     d.user.Perm.Modify,
-		Expand:     false,
-		ReadHeader: d.server.TypeDetectionByHeader,
-		Checker:    d,
-	})
-
-	switch {
-	case errors.Is(err, afero.ErrFileNotFound):
+	// Pin the generation before reading file/cache state. Loading it after
+	// validation could adopt a replacement whose offset happens to match.
+	var generation *uploadGeneration
+	if value, ok := uploadMutations.entries.Load(originalKey); ok {
+		generation = value.(*uploadGeneration)
+	}
+	uploadLength, cacheKey, status, err := inspectPatchUpload(d, r.URL.Path, cache, uploadOffset, generation)
+	if status != 0 {
+		return status, err
+	}
+	if _, local := cache.(interface{ uploadCacheOwner() *memoryUploadCache }); local && generation == nil {
 		return http.StatusNotFound, nil
-	case err != nil:
-		return errToStatus(err), err
 	}
-
-	uploadLength, err := cache.GetLength(file.RealPath())
-	if err != nil {
-		return http.StatusNotFound, err
+	if !patchGenerationCurrent(originalKey, generation) {
+		return http.StatusNotFound, nil
 	}
-
-	if uploadOffset > uploadLength {
-		return http.StatusBadRequest, fmt.Errorf("upload offset %d exceeds declared length %d", uploadOffset, uploadLength)
-	}
-
-	// Prevent the upload from being evicted during the transfer
-	stop := keepUploadActive(cache, file.RealPath())
+	stop := keepUploadActive(r.Context(), cache, cacheKey, originalKey, generation)
 	defer stop()
 
-	switch {
-	case file.IsDir:
-		return http.StatusBadRequest, fmt.Errorf("cannot upload to a directory %s", file.RealPath())
-	case file.Size != uploadOffset:
-		return http.StatusConflict, fmt.Errorf(
-			"%s file size doesn't match the provided offset: %d",
-			file.RealPath(),
-			uploadOffset,
-		)
+	key, unlockMutation := lockFileUploadMutation(d, r.URL.Path)
+	defer func() {
+		if unlockMutation != nil {
+			unlockMutation()
+		}
+	}()
+	if err := r.Context().Err(); err != nil {
+		return http.StatusRequestTimeout, err
+	}
+	if key != originalKey || !patchGenerationCurrent(key, generation) {
+		return http.StatusNotFound, nil
+	}
+	// The directory operation may have replaced or retired the file while we
+	// waited. Recheck the original request offset under the mutation lock.
+	uploadLength, cacheKey, status, err = inspectPatchUpload(d, r.URL.Path, cache, uploadOffset, generation)
+	if status != 0 {
+		return status, err
 	}
 
 	openFile, err := d.user.Fs.OpenFile(r.URL.Path, os.O_WRONLY|os.O_APPEND, d.settings.FileMode)
@@ -282,6 +302,15 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 		return http.StatusInternalServerError, fmt.Errorf("could not open file: %w", err)
 	}
 	defer openFile.Close()
+	// A path may have been replaced after inspection, including by a native
+	// rename through a symlink target. Verify the handle we will actually write.
+	openedInfo, err := openFile.Stat()
+	if err != nil {
+		return http.StatusInternalServerError, fmt.Errorf("could not stat opened upload: %w", err)
+	}
+	if !patchGenerationOwnsFile(generation, openedInfo) {
+		return http.StatusNotFound, nil
+	}
 
 	_, err = openFile.Seek(uploadOffset, 0)
 	if err != nil {
@@ -321,11 +350,74 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 	w.Header().Set("Upload-Offset", strconv.FormatInt(newOffset, 10))
 
 	if newOffset >= uploadLength {
-		cache.Complete(file.RealPath())
+		retireUpload(key)
+		cache.Complete(cacheKey)
+		unlockMutation()
+		unlockMutation = nil
 		_ = d.RunHook(func() error { return nil }, "upload", r.URL.Path, "", d.user)
 	}
 
 	return http.StatusNoContent, nil
+}
+
+// inspectPatchUpload rejects invalid chunks before starting their keepalive.
+// Call it again under the mutation lock before opening the file for writing.
+func inspectPatchUpload(d *data, path string, cache UploadCache, offset int64, generation *uploadGeneration) (int64, string, int, error) {
+	file, err := files.NewFileInfo(&files.FileOptions{
+		Fs:         d.user.Fs,
+		Path:       path,
+		Modify:     d.user.Perm.Modify,
+		Expand:     false,
+		ReadHeader: d.server.TypeDetectionByHeader,
+		Checker:    d,
+	})
+	if errors.Is(err, afero.ErrFileNotFound) {
+		return 0, "", http.StatusNotFound, nil
+	}
+	if err != nil {
+		return 0, "", errToStatus(err), err
+	}
+	if generation != nil && os.SameFile(generation.owned, generation.owned) {
+		info, err := d.user.Fs.Stat(path)
+		if err != nil {
+			return 0, "", errToStatus(err), err
+		}
+		if !patchGenerationOwnsFile(generation, info) {
+			return 0, "", http.StatusNotFound, nil
+		}
+	}
+	cacheKey := file.RealPath()
+	if generation != nil {
+		cacheKey = generation.cacheKey
+	}
+	length, err := cache.GetLength(cacheKey)
+	if err != nil {
+		return 0, "", http.StatusNotFound, err
+	}
+	if offset > length {
+		return 0, "", http.StatusBadRequest, fmt.Errorf("upload offset %d exceeds declared length %d", offset, length)
+	}
+	if file.IsDir {
+		return 0, "", http.StatusBadRequest, fmt.Errorf("cannot upload to a directory %s", file.RealPath())
+	}
+	if file.Size != offset {
+		return 0, "", http.StatusConflict, fmt.Errorf("%s file size doesn't match the provided offset: %d", file.RealPath(), offset)
+	}
+	return length, cacheKey, 0, nil
+}
+
+func patchGenerationCurrent(key string, generation *uploadGeneration) bool {
+	current, ok := uploadMutations.entries.Load(key)
+	if generation == nil {
+		return !ok
+	}
+	return ok && current == generation
+}
+
+// Virtual filesystems may not expose stable identity. Preserve their existing
+// PATCH behavior while enforcing inode ownership wherever SameFile supports it.
+func patchGenerationOwnsFile(generation *uploadGeneration, info os.FileInfo) bool {
+	return generation == nil || !os.SameFile(generation.owned, generation.owned) || os.SameFile(generation.owned, info)
 }
 
 func tusDeleteHandler(cache UploadCache) handleFunc {
@@ -333,6 +425,9 @@ func tusDeleteHandler(cache UploadCache) handleFunc {
 		if r.URL.Path == "/" || !d.user.Perm.Delete {
 			return http.StatusForbidden, nil
 		}
+
+		key, unlock := lockFileUploadMutation(d, r.URL.Path)
+		defer unlock()
 
 		file, err := files.NewFileInfo(&files.FileOptions{
 			Fs:         d.user.Fs,
@@ -351,7 +446,8 @@ func tusDeleteHandler(cache UploadCache) handleFunc {
 			return http.StatusNotFound, err
 		}
 
-		err = d.user.Fs.RemoveAll(r.URL.Path)
+		retireUpload(key)
+		err = d.user.Fs.Remove(r.URL.Path)
 		if err != nil {
 			return errToStatus(err), err
 		}
@@ -367,6 +463,10 @@ func tusDeleteHandler(cache UploadCache) handleFunc {
 // filesystem that is not disk-backed has no such path; the virtual one is then
 // unique within it.
 func uploadLockKey(d *data, path string) string {
+	return uploadIdentityKey(d.user.Fs, path, uploadPathKey(d, path))
+}
+
+func uploadPathKey(d *data, path string) string {
 	if files.BasePath(d.user.Fs) == nil {
 		return path
 	}

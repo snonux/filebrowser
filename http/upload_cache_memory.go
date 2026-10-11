@@ -85,8 +85,11 @@ func (c *memoryUploadCache) Touch(filePath string) {
 	c.cache.Touch(filePath)
 }
 
+func (c *memoryUploadCache) uploadCacheOwner() *memoryUploadCache { return c }
+
 func (c *memoryUploadCache) Close() {
 	c.cache.Stop()
+	forgetUploadCache(c)
 }
 
 // NewUploadCache creates a new upload cache.

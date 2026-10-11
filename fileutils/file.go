@@ -18,6 +18,13 @@ var ErrSameFile = errors.New("source and destination are the same file")
 // By default the rename filesystem system call is used. If src and dst point to different volumes
 // the file copy is used as a fallback
 func MoveFile(afs afero.Fs, src, dst string, fileMode, dirMode fs.FileMode) error {
+	return MoveFileWithFallback(afs, src, dst, fileMode, dirMode, nil)
+}
+
+// MoveFileWithFallback moves a file like MoveFile, calling beforeCopy only when
+// a failed rename will fall back to copying. A callback error aborts the move
+// without copying or removing either path.
+func MoveFileWithFallback(afs afero.Fs, src, dst string, fileMode, dirMode fs.FileMode, beforeCopy func() error) error {
 	if afs.Rename(src, dst) == nil {
 		return nil
 	}
@@ -35,6 +42,11 @@ func MoveFile(afs afero.Fs, src, dst string, fileMode, dirMode fs.FileMode) erro
 		return ErrSameFile
 	}
 	// fallback
+	if beforeCopy != nil {
+		if err := beforeCopy(); err != nil {
+			return err
+		}
+	}
 	err = Copy(afs, src, dst, fileMode, dirMode)
 	if err != nil {
 		if !errors.Is(err, ErrSameFile) {

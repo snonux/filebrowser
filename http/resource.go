@@ -121,6 +121,15 @@ func resourceDeleteHandler(fileCache FileCache) handleFunc {
 		}
 
 		err = d.RunHook(func() error {
+			uploadMutations.barrier.Lock()
+			defer uploadMutations.barrier.Unlock()
+			if !d.Check(r.URL.Path) {
+				return fberrors.ErrPermissionDenied
+			}
+			if err := checkDescendants(d, r.URL.Path, ""); err != nil {
+				return err
+			}
+			retireUploadsUnder(uploadLockKey(d, r.URL.Path))
 			return d.user.Fs.RemoveAll(r.URL.Path)
 		}, "delete", r.URL.Path, "", d.user)
 
@@ -178,8 +187,28 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 		}
 
 		err = d.RunHook(func() error {
+			key, unlock := lockFileUploadMutation(d, r.URL.Path)
+			defer unlock()
+			if !d.Check(r.URL.Path) {
+				return fberrors.ErrPermissionDenied
+			}
+			if current, statErr := d.user.Fs.Stat(r.URL.Path); statErr == nil {
+				if current.IsDir() {
+					return fberrors.ErrInvalidRequestParams
+				}
+				if r.URL.Query().Get("override") != "true" {
+					return fberrors.ErrExist
+				}
+				if !d.user.Perm.Modify {
+					return fberrors.ErrPermissionDenied
+				}
+			} else if !os.IsNotExist(statErr) {
+				return statErr
+			}
+			retireUpload(key)
 			info, writeErr := writeFile(d.user.Fs, r.URL.Path, r.Body, d.settings.FileMode, d.settings.DirMode)
 			if writeErr != nil {
+				_ = d.user.Fs.Remove(r.URL.Path)
 				return writeErr
 			}
 
@@ -187,13 +216,6 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 			w.Header().Set("ETag", etag)
 			return nil
 		}, "upload", r.URL.Path, "", d.user)
-
-		if err != nil {
-			// Drop the partial file. Remove, not RemoveAll: the cleanup only ever
-			// owns the single file it tried to write, so it must never recurse
-			// should the path turn out to be a directory after all.
-			_ = d.user.Fs.Remove(r.URL.Path)
-		}
 
 		return errToStatus(err), err
 	})
@@ -218,6 +240,15 @@ var resourcePutHandler = withUser(func(w http.ResponseWriter, r *http.Request, d
 	}
 
 	err = d.RunHook(func() error {
+		key, unlock := lockFileUploadMutation(d, r.URL.Path)
+		defer unlock()
+		if !d.Check(r.URL.Path) {
+			return fberrors.ErrPermissionDenied
+		}
+		if _, err := d.user.Fs.Stat(r.URL.Path); err != nil {
+			return err
+		}
+		retireUpload(key)
 		info, writeErr := writeFile(d.user.Fs, r.URL.Path, r.Body, d.settings.FileMode, d.settings.DirMode)
 		if writeErr != nil {
 			return writeErr
@@ -289,6 +320,25 @@ func resourcePatchHandler(fileCache FileCache) handleFunc {
 		}
 
 		err = d.RunHook(func() error {
+			uploadMutations.barrier.Lock()
+			defer uploadMutations.barrier.Unlock()
+			if !d.Check(src) || !d.Check(dst) {
+				return fberrors.ErrPermissionDenied
+			}
+			if err := checkDescendants(d, src, dst); err != nil {
+				return err
+			}
+			srcInfo, srcErr := d.user.Fs.Stat(src)
+			if srcErr != nil {
+				return srcErr
+			}
+			dstInfo, dstErr := d.user.Fs.Stat(dst)
+			if action == "copy" && (src == dst || os.SameFile(srcInfo, dstInfo)) {
+				return fmt.Errorf("%w: %w", fberrors.ErrInvalidRequestParams, fileutils.ErrSameFile)
+			}
+			if dstErr == nil && r.URL.Query().Get("override") != "true" && !(action == "rename" && os.SameFile(srcInfo, dstInfo)) {
+				return fberrors.ErrExist
+			}
 			return patchAction(r.Context(), action, src, dst, d, fileCache)
 		}, action, src, dst, d.user)
 
@@ -415,6 +465,9 @@ func patchAction(ctx context.Context, action, src, dst string, d *data, fileCach
 			return fberrors.ErrPermissionDenied
 		}
 
+		if err := retireCopyDestination(d, src, dst); err != nil {
+			return err
+		}
 		return fileutils.Copy(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode)
 	case "rename":
 		if !d.user.Perm.Rename {
@@ -441,9 +494,19 @@ func patchAction(ctx context.Context, action, src, dst string, d *data, fileCach
 			return err
 		}
 
-		err = fileutils.MoveFile(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode)
+		retireUploadsUnder(uploadLockKey(d, src))
+		copied := false
+		err = fileutils.MoveFileWithFallback(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode, func() error {
+			copied = true
+			return retireCopyDestination(d, src, dst)
+		})
 		if err != nil {
 			return err
+		}
+		if !copied {
+			// A native rename replaces the destination rather than merging it.
+			// The exclusive barrier still blocks cleanup of its old uploads.
+			retireUploadsUnder(uploadPathKey(d, dst))
 		}
 
 		// The old path no longer names what was shared. Drop its shares, as a
