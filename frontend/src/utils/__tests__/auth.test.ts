@@ -5,6 +5,7 @@ import { useAuthStore } from "@/stores/auth";
 import { login, logout, parseToken, renew, validateLogin } from "@/utils/auth";
 import { fetchURL, setSafeTimeout } from "@/api/utils";
 import router from "@/router";
+import { configureApplicationApiAuth } from "@/utils/api-auth";
 
 vi.mock("@/router", () => ({ default: { push: vi.fn() } }));
 vi.mock("@/i18n", () => ({
@@ -53,6 +54,7 @@ beforeEach(() => {
   authConfig.authMethod = "json";
   authConfig.logoutPage = "/login";
   setActivePinia(createPinia());
+  configureApplicationApiAuth();
   localStorage.clear();
   document.cookie = "auth=; Max-Age=0; Path=/";
   vi.stubGlobal("fetch", vi.fn());

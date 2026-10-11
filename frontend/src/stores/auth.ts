@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { detectLocale, setLocale } from "@/i18n";
 import { cloneDeep } from "lodash-es";
-import type { SafeTimeout } from "@/api/utils";
+import type { SafeTimeout } from "@/utils/timers";
 
 export const useAuthStore = defineStore("auth", {
   // convert to a function

@@ -126,4 +126,24 @@ describe("copy and move conflict prompts", () => {
     );
     expect(api.move).not.toHaveBeenCalled();
   });
+  it.each([
+    [CopyPrompt, "copy"],
+    [MovePrompt, "move"],
+  ] as const)(
+    "closes the prompt at the caller before %s starts",
+    async (prompt, operation) => {
+      const context = makeContext();
+      vi.mocked(checkConflict).mockResolvedValueOnce([]);
+      vi.mocked(api[operation]).mockImplementationOnce(async () => {
+        expect(context.closeHovers).toHaveBeenCalledTimes(1);
+        throw new Error("server failed");
+      });
+      await (prompt as any).methods[operation].call(context, event);
+      await vi.waitFor(() =>
+        expect(context.$showError).toHaveBeenCalledWith(
+          expect.objectContaining({ message: "server failed" })
+        )
+      );
+    }
+  );
 });

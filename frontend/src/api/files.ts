@@ -1,8 +1,12 @@
-import { useAuthStore } from "@/stores/auth";
-import { useLayoutStore } from "@/stores/layout";
 import { baseURL } from "@/utils/constants";
 import { upload as postTus, useTus } from "./tus";
-import { createURL, fetchURL, removePrefix, StatusError } from "./utils";
+import {
+  createURL,
+  fetchURL,
+  getAuthToken,
+  removePrefix,
+  StatusError,
+} from "./utils";
 import { isEncodableResponse, makeRawResource } from "@/utils/encodings";
 
 export async function fetch(url: string, signal?: AbortSignal) {
@@ -139,7 +143,6 @@ async function postResources(
     bufferContent = await new Response(content).arrayBuffer();
   }
 
-  const authStore = useAuthStore();
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open(
@@ -147,7 +150,7 @@ async function postResources(
       `${baseURL}/api/resources${url}?override=${overwrite}`,
       true
     );
-    request.setRequestHeader("X-Auth", authStore.jwt);
+    request.setRequestHeader("X-Auth", getAuthToken());
 
     if (typeof onupload === "function") {
       request.upload.onprogress = onupload;
@@ -177,7 +180,6 @@ function moveCopy(
   overwrite = false,
   rename = false
 ) {
-  const layoutStore = useLayoutStore();
   const promises = [];
 
   for (const item of items) {
@@ -191,7 +193,6 @@ function moveCopy(
     }&destination=${to}&override=${finalOverwrite}&rename=${finalRename}`;
     promises.push(resourceAction(url, "PATCH"));
   }
-  layoutStore.closeHovers();
   return Promise.all(promises);
 }
 

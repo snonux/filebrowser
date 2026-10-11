@@ -11,6 +11,7 @@ import createPinia from "@/stores";
 import router from "@/router";
 import i18n, { isRtl } from "@/i18n";
 import App from "@/App.vue";
+import { configureApplicationApiAuth } from "@/utils/api-auth";
 import CustomToast from "@/components/CustomToast.vue";
 
 import dayjs from "dayjs";
@@ -39,6 +40,7 @@ app.use(Toast, {
 
 app.use(i18n);
 app.use(pinia);
+configureApplicationApiAuth();
 app.use(router);
 
 app.mixin({

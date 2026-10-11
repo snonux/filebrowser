@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FileListing from "@/views/files/FileListing.vue";
 import UploadPrompt from "@/components/prompts/Upload.vue";
 
@@ -9,8 +9,17 @@ const harness = vi.hoisted(() => ({
   queueUpload: vi.fn(),
   showHover: vi.fn(),
   closeHovers: vi.fn(),
+  clipboardStore: {
+    key: "",
+    path: "",
+    items: [] as any[],
+    $patch: vi.fn(),
+    resetClipboard: vi.fn(),
+  },
+  layoutStore: { currentPrompt: null as string | null },
   fileStore: {
-    req: { items: [] },
+    req: { items: [] as any[] },
+    reload: false,
     selected: [] as number[],
     selectedCount: 0,
     multiple: false,
@@ -22,14 +31,16 @@ vi.mock("@/stores/auth", () => ({
   useAuthStore: () => ({ user: null }),
 }));
 vi.mock("@/stores/clipboard", () => ({
-  useClipboardStore: () => ({ items: [], $patch: vi.fn() }),
+  useClipboardStore: () => harness.clipboardStore,
 }));
 vi.mock("@/stores/file", () => ({
   useFileStore: () => harness.fileStore,
 }));
 vi.mock("@/stores/layout", () => ({
   useLayoutStore: () => ({
-    currentPrompt: null,
+    get currentPrompt() {
+      return harness.layoutStore.currentPrompt;
+    },
     showHover: harness.showHover,
     closeHovers: harness.closeHovers,
   }),
@@ -37,11 +48,11 @@ vi.mock("@/stores/layout", () => ({
 vi.mock("@/stores/upload", () => ({
   useUploadStore: () => ({ upload: harness.queueUpload }),
 }));
-vi.mock("@/api", () => ({
+vi.mock("@/api", async () => ({
   users: {},
-  files: {},
+  files: await vi.importActual("@/api/files"),
 }));
-vi.mock("@/utils/constants", () => ({ enableExec: false }));
+vi.mock("@/utils/constants", () => ({ enableExec: false, baseURL: "" }));
 vi.mock("@/utils/auth", () => ({}));
 vi.mock("@/router", () => ({ default: {} }));
 vi.mock("@/i18n", () => ({ default: {} }));
@@ -124,6 +135,22 @@ describe("upload conflict resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     harness.fileStore.preselect = "";
+    harness.fileStore.reload = false;
+    harness.fileStore.req.items = [];
+    harness.fileStore.selected = [];
+    harness.clipboardStore.items = [];
+    harness.clipboardStore.key = "";
+    harness.clipboardStore.path = "";
+    harness.layoutStore.currentPrompt = null;
+    harness.clipboardStore.$patch.mockImplementation((patch) => {
+      Object.assign(harness.clipboardStore, patch);
+    });
+    harness.clipboardStore.resetClipboard.mockImplementation(() => {
+      harness.clipboardStore.items = [];
+    });
+    harness.closeHovers.mockImplementation(() => {
+      harness.layoutStore.currentPrompt = null;
+    });
     vi.stubGlobal("window", {
       innerWidth: 1024,
       innerHeight: 768,
@@ -133,6 +160,91 @@ describe("upload conflict resolution", () => {
     vi.stubGlobal("document", {
       getElementsByClassName: () => [],
     });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([
+    ["c", "copy"],
+    ["x", "rename"],
+  ])(
+    "closes hovers at %s clipboard paste dispatch after inspection",
+    async (key, operation) => {
+      const source = {
+        url: "/files/source/folder/",
+        name: "folder",
+        size: 12,
+        isDir: true,
+        modified: "2026-10-11",
+      };
+      harness.fileStore.req.items = [source];
+      harness.fileStore.selected = [0];
+      let finishInspection!: (conflicts: ConflictingResource[]) => void;
+      harness.checkConflict.mockReturnValue(
+        new Promise<ConflictingResource[]>((resolve) => {
+          finishInspection = resolve;
+        })
+      );
+      let promptAtDispatch: string | null | undefined;
+      let closeCallsAtDispatch: number | undefined;
+      const dispatch = vi.fn().mockImplementation(() => {
+        promptAtDispatch = harness.layoutStore.currentPrompt;
+        closeCallsAtDispatch = harness.closeHovers.mock.calls.length;
+        return Promise.resolve(new Response("{}"));
+      });
+      vi.stubGlobal("fetch", dispatch);
+      const bindings = setup(FileListing);
+      bindings.copyCut({ key, target: { tagName: "MAIN" } });
+      const pendingPaste = bindings.paste({ target: { tagName: "MAIN" } });
+
+      expect(harness.checkConflict).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            from: "/files/source/folder",
+            to: "/files/target/folder",
+            overwrite: false,
+            rename: true,
+          }),
+        ],
+        "/files/target/",
+        true
+      );
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(harness.closeHovers).not.toHaveBeenCalled();
+      // A different prompt can open while the directory inspection is pending.
+      harness.layoutStore.currentPrompt = "info";
+      finishInspection([]);
+      await pendingPaste;
+
+      expect(closeCallsAtDispatch).toBe(1);
+      expect(promptAtDispatch).toBeNull();
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch).toHaveBeenCalledWith(
+        `/api/resources/source/folder?action=${operation}&destination=%2Ftarget%2Ffolder&override=false&rename=true`,
+        { method: "PATCH", headers: { "X-Auth": "" } }
+      );
+      await vi.waitFor(() => expect(harness.fileStore.reload).toBe(true));
+      expect(harness.fileStore.preselect).toBe("/target/folder");
+      expect(harness.clipboardStore.resetClipboard).toHaveBeenCalledTimes(
+        key === "x" ? 1 : 0
+      );
+    }
+  );
+
+  it("leaves hovers and transport untouched when the clipboard is empty", async () => {
+    const dispatch = vi.fn();
+    vi.stubGlobal("fetch", dispatch);
+    harness.layoutStore.currentPrompt = "info";
+    const bindings = setup(FileListing);
+
+    await bindings.paste({ target: { tagName: "MAIN" } });
+
+    expect(harness.checkConflict).not.toHaveBeenCalled();
+    expect(harness.closeHovers).not.toHaveBeenCalled();
+    expect(harness.layoutStore.currentPrompt).toBe("info");
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(harness.clipboardStore.resetClipboard).not.toHaveBeenCalled();
+    expect(harness.fileStore.reload).toBe(false);
   });
 
   it("authorizes an explicit drag/drop Replace choice", async () => {

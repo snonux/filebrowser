@@ -3,8 +3,8 @@ import router from "@/router";
 import type { JwtPayload } from "jwt-decode";
 import { jwtDecode } from "jwt-decode";
 import { authMethod, baseURL, noAuth, logoutPage } from "./constants";
-import { StatusError } from "@/api/utils";
-import { setSafeTimeout } from "@/api/utils";
+import { StatusError } from "./errors";
+import { setSafeTimeout } from "./timers";
 
 // Auth callbacks may outlive logout or a replacement login, even when the
 // replacement token is identical to the old one.

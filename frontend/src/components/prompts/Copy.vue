@@ -101,6 +101,7 @@ export default {
 
       const action = async (overwrite, rename) => {
         buttons.loading("copy");
+        this.closeHovers();
 
         await api
           .copy(items, overwrite, rename)

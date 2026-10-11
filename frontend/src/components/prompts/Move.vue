@@ -107,6 +107,7 @@ export default {
 
       const action = async (overwrite, rename) => {
         buttons.loading("move");
+        this.closeHovers();
 
         await api
           .move(items, overwrite, rename)

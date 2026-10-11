@@ -102,6 +102,7 @@ export default {
       newLink =
         url.removeLastDir(oldLink) + "/" + encodeURIComponent(this.name);
 
+      this.closeHovers();
       try {
         await api.move([{ from: oldLink, to: newLink }]);
         if (!this.isListing) {
@@ -115,8 +116,6 @@ export default {
       } catch (e) {
         this.$showError(e);
       }
-
-      this.closeHovers();
     },
   },
 };

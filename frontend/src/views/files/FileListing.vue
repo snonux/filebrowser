@@ -677,6 +677,7 @@ const paste = async (event: Event) => {
   const preselect = removePrefix(route.path) + items[0].name;
 
   let action = (overwrite?: boolean, rename?: boolean) => {
+    layoutStore.closeHovers();
     api
       .copy(items, overwrite, rename)
       .then(() => {
@@ -688,6 +689,7 @@ const paste = async (event: Event) => {
 
   if (clipboardStore.key === "x") {
     action = (overwrite, rename) => {
+      layoutStore.closeHovers();
       api
         .move(items, overwrite, rename)
         .then(() => {

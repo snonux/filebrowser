@@ -199,6 +199,7 @@ const drop = async (event: Event) => {
       (event as KeyboardEvent).ctrlKey || (event as KeyboardEvent).metaKey
         ? api.copy
         : api.move;
+    layoutStore.closeHovers();
     action(items, overwrite, rename)
       .then(() => {
         fileStore.reload = true;
