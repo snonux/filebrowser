@@ -10,10 +10,10 @@ import '../api/paths.dart';
 import '../app_routes.dart';
 import '../models/models.dart';
 import '../navigation_key.dart';
-import '../providers/device_files_provider.dart';
+import '../providers/file_operations_provider.dart';
 import '../providers/files_provider.dart';
 import '../providers/session_provider.dart';
-import '../providers/transfers_provider.dart';
+import '../services/file_operations.dart';
 import '../utils/format.dart';
 import 'folder_picker_screen.dart';
 import 'share_dialog.dart';
@@ -90,7 +90,13 @@ class FileActions {
 
   final ProviderContainer ref;
 
-  FileBrowserApi get _api => ref.read(requireSessionProvider).api;
+  FileOperation _begin() => ref
+      .read(fileOperationsProvider)
+      .begin(ref.read(sessionProvider).valueOrNull);
+
+  void _report(OperationResult<dynamic> result, {String prefix = ''}) {
+    if (result.error != null) showMessage('$prefix${result.error!.message}');
+  }
 
   void _refresh(String dir) =>
       ref.invalidate(resourceProvider(normalizePath(dir)));
@@ -119,48 +125,68 @@ class FileActions {
 
   /// Opens a path known only by name (from search): fetches it first.
   Future<void> openPath(BuildContext context, String path) async {
+    final operation = _begin();
     try {
-      final item = (await _api.fetch(path)).item;
-      if (context.mounted) await open(context, item);
-    } on ApiException catch (e) {
-      showMessage(e.message);
+      final result = await operation.fetch(path);
+      if (result.succeeded && context.mounted) {
+        final item = result.value!;
+        if (opensInApp(item) || item.isDir) {
+          await open(context, item);
+        } else {
+          await _download(operation, item, openWhenDone: true);
+        }
+      } else {
+        _report(result);
+      }
+    } finally {
+      operation.close();
     }
   }
 
   Future<void> createFolder(BuildContext context, String dir) async {
-    final name = await askName(context, title: 'New folder', action: 'Create');
-    if (name == null) return;
+    final operation = _begin();
     try {
-      await _api.createFolder(joinPath(dir, name));
-      _refresh(dir);
-    } on ApiException catch (e) {
-      showMessage(e.message);
+      final name =
+          await askName(context, title: 'New folder', action: 'Create');
+      if (name == null) return;
+      final result = await operation.createFolder(joinPath(dir, name));
+      if (result.succeeded) _refresh(dir);
+      _report(result);
+    } finally {
+      operation.close();
     }
   }
 
   Future<void> createFile(BuildContext context, String dir) async {
-    final name = await askName(context, title: 'New file', action: 'Create');
-    if (name == null) return;
-    final path = joinPath(dir, name);
+    final operation = _begin();
     try {
-      await _api.createFile(path);
-      _refresh(dir);
-      if (context.mounted) context.push(AppRoutes.edit(path));
-    } on ApiException catch (e) {
-      showMessage(e.message);
+      final name = await askName(context, title: 'New file', action: 'Create');
+      if (name == null) return;
+      final path = joinPath(dir, name);
+      final result = await operation.createFile(path);
+      if (result.succeeded) {
+        _refresh(dir);
+        if (context.mounted) context.push(AppRoutes.edit(path));
+      }
+      _report(result);
+    } finally {
+      operation.close();
     }
   }
 
   Future<void> rename(BuildContext context, FileItem item) async {
-    final name = await askName(context,
-        title: 'Rename', action: 'Rename', initial: item.name);
-    if (name == null || name == item.name) return;
-    final dir = parentOf(item.path);
+    final operation = _begin();
     try {
-      await _api.move(item.path, joinPath(dir, name));
-      _refresh(dir);
-    } on ApiException catch (e) {
-      showMessage(e.message);
+      final name = await askName(context,
+          title: 'Rename', action: 'Rename', initial: item.name);
+      if (name == null || name == item.name) return;
+      final dir = parentOf(item.path);
+      final result =
+          await operation.transfer(item.path, joinPath(dir, name), copy: false);
+      if (result.succeeded) _refresh(dir);
+      _report(result);
+    } finally {
+      operation.close();
     }
   }
 
@@ -168,159 +194,153 @@ class FileActions {
   Future<void> transferTo(BuildContext context, List<FileItem> items,
       {required bool copy}) async {
     if (items.isEmpty) return;
-    final source = parentOf(items.first.path);
-    final target = await Navigator.of(context).push<String>(MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => FolderPickerScreen(
-          start: source, action: copy ? 'Copy here' : 'Move here'),
-    ));
-    if (target == null || !context.mounted) return;
-    var done = 0;
-    for (final item in items) {
-      final dest = joinPath(target, item.name);
-      if (!copy && normalizePath(dest) == normalizePath(item.path)) continue;
-      try {
-        await _transferOne(item, dest, copy: copy, override: false);
-        done++;
-      } on ApiException catch (e) {
-        if (e.isConflict && context.mounted) {
+    final operation = _begin();
+    try {
+      final source = parentOf(items.first.path);
+      final target = await Navigator.of(context).push<String>(MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => FolderPickerScreen(
+            start: source, action: copy ? 'Copy here' : 'Move here'),
+      ));
+      if (target == null || !context.mounted || operation.cancelled) return;
+      var done = 0;
+      for (final item in items) {
+        if (operation.cancelled) return;
+        final dest = joinPath(target, item.name);
+        if (!copy && normalizePath(dest) == normalizePath(item.path)) continue;
+        var result = await operation.transfer(item.path, dest, copy: copy);
+        if (result.status == OperationStatus.conflict && context.mounted) {
           final replace = await confirm(context,
               title: '"${item.name}" exists',
               message: 'Replace the item in the destination?',
               action: 'Replace');
           if (!replace) continue;
-          try {
-            await _transferOne(item, dest, copy: copy, override: true);
-            done++;
-          } on ApiException catch (e) {
-            showMessage(e.message);
-          }
-        } else {
-          showMessage(e.message);
+          result = await operation.transfer(item.path, dest,
+              copy: copy, override: true);
         }
+        if (result.succeeded) done++;
+        _report(result);
       }
-    }
-    _refresh(source);
-    _refresh(target);
-    if (done > 0) {
-      showMessage('${copy ? 'Copied' : 'Moved'} $done '
-          '${done == 1 ? 'item' : 'items'} to ${target == '/' ? 'Home' : baseName(target)}');
+      if (operation.cancelled) return;
+      _refresh(source);
+      _refresh(target);
+      if (done > 0) {
+        showMessage('${copy ? 'Copied' : 'Moved'} $done '
+            '${done == 1 ? 'item' : 'items'} to ${target == '/' ? 'Home' : baseName(target)}');
+      }
+    } finally {
+      operation.close();
     }
   }
 
-  Future<void> _transferOne(FileItem item, String dest,
-          {required bool copy, required bool override}) =>
-      copy
-          ? _api.copy(item.path, dest, override: override)
-          : _api.move(item.path, dest, override: override);
-
   Future<bool> delete(BuildContext context, List<FileItem> items) async {
     if (items.isEmpty) return false;
-    final ok = await confirm(
-      context,
-      title: items.length == 1
-          ? 'Delete "${items.first.name}"?'
-          : 'Delete ${items.length} items?',
-      message: 'This cannot be undone.',
-      action: 'Delete',
-    );
-    if (!ok) return false;
-    for (final item in items) {
-      try {
-        await _api.delete(item.path);
-      } on ApiException catch (e) {
-        showMessage('${item.name}: ${e.message}');
+    final operation = _begin();
+    try {
+      final ok = await confirm(
+        context,
+        title: items.length == 1
+            ? 'Delete "${items.first.name}"?'
+            : 'Delete ${items.length} items?',
+        message: 'This cannot be undone.',
+        action: 'Delete',
+      );
+      if (!ok || operation.cancelled) return false;
+      for (final item in items) {
+        final result = await operation.delete(item.path);
+        if (result.status == OperationStatus.cancelled) return false;
+        _report(result, prefix: '${item.name}: ');
       }
+      _refresh(parentOf(items.first.path));
+      return true;
+    } finally {
+      operation.close();
     }
-    _refresh(parentOf(items.first.path));
-    return true;
   }
 
   /// Picks files on the device and uploads them into [dir] with tus.
   Future<void> upload(BuildContext context, String dir) async {
-    final files = await ref.read(deviceFilesProvider).pickFiles();
-    for (final file in files) {
-      if (!context.mounted) return;
-      await uploadFile(context, file, dir);
+    final operation = _begin();
+    try {
+      final result = await operation.pickUploads();
+      if (!result.succeeded) {
+        _report(result);
+        return;
+      }
+      for (final file in result.value!) {
+        if (!context.mounted || operation.cancelled) return;
+        await _uploadFile(context, operation, file, dir);
+      }
+    } finally {
+      operation.close();
     }
   }
 
   Future<void> uploadFile(BuildContext context, File file, String dir) async {
-    final name = file.uri.pathSegments.last;
-    final path = joinPath(dir, name);
-    final transfers = ref.read(transfersProvider.notifier);
-    final id = transfers.start(TransferKind.upload, name);
-    Future<void> run(bool override) => _api.upload(file, path,
-        override: override,
-        onProgress: (sent, total) => transfers.progress(id, sent, total));
+    final operation = _begin();
     try {
-      try {
-        await run(false);
-      } on ApiException catch (e) {
-        if (!e.isConflict || !context.mounted) rethrow;
-        final replace = await confirm(context,
-            title: '"$name" exists',
-            message: 'Replace the file on the server?',
-            action: 'Replace');
-        if (!replace) {
-          transfers.fail(id, 'Skipped');
-          return;
-        }
-        await run(true);
-      }
-      transfers.finish(id);
-    } on ApiException catch (e) {
-      transfers.fail(id, e.message);
-      showMessage('Upload of $name failed: ${e.message}');
+      await _uploadFile(context, operation, file, dir);
     } finally {
-      _refresh(dir);
+      operation.close();
     }
+  }
+
+  Future<void> _uploadFile(BuildContext context, FileOperation operation,
+      File file, String dir) async {
+    final result = await operation.upload(file, dir, replace: (name) async {
+      if (!context.mounted) return false;
+      return confirm(context,
+          title: '"$name" exists',
+          message: 'Replace the file on the server?',
+          action: 'Replace');
+    });
+    if (!operation.cancelled) _refresh(dir);
+    _report(result, prefix: 'Upload of ${file.uri.pathSegments.last} failed: ');
   }
 
   /// Saves a file (or a folder as a zip) into the device's download folder.
   Future<File?> download(FileItem item, {bool openWhenDone = false}) async {
-    final deviceFiles = ref.read(deviceFilesProvider);
-    final dir = await deviceFiles.downloadDirectory();
-    final fileName = item.isDir ? '${item.name}.zip' : item.name;
-    final target = _freeName(dir, fileName);
-    final transfers = ref.read(transfersProvider.notifier);
-    final id = transfers.start(TransferKind.download, fileName);
+    final operation = _begin();
     try {
-      await _api.download(item.path, target.path,
-          archive: item.isDir ? 'zip' : null,
-          onProgress: (received, total) =>
-              transfers.progress(id, received, total < 0 ? item.size : total));
-      transfers.finish(id);
-    } on ApiException catch (e) {
-      transfers.fail(id, e.message);
-      showMessage('Download of $fileName failed: ${e.message}');
+      return await _download(operation, item, openWhenDone: openWhenDone);
+    } finally {
+      operation.close();
+    }
+  }
+
+  Future<File?> _download(FileOperation operation, FileItem item,
+      {required bool openWhenDone}) async {
+    final result = await operation.download(item);
+    final fileName = item.isDir ? '${item.name}.zip' : item.name;
+    if (!result.succeeded) {
+      _report(result, prefix: 'Download of $fileName failed: ');
       return null;
     }
+    final target = result.value!;
+    // A snackbar can outlive this operation. Capture the device service here;
+    // opening a saved local file does not perform an account-bound request.
+    final deviceFiles = ref.read(fileOperationsProvider).deviceFiles;
     Future<void> openIt() async {
-      final error = await deviceFiles.open(target);
-      if (error != null) showMessage('Cannot open $fileName: $error');
+      try {
+        final error = await deviceFiles.open(target);
+        if (error != null) showMessage('Cannot open $fileName: $error');
+      } catch (error) {
+        showMessage('Cannot open $fileName: $error');
+      }
     }
 
     if (openWhenDone) {
-      await openIt();
+      final opened = await operation.open(target);
+      _report(opened, prefix: 'Cannot open $fileName: ');
+      if (opened.succeeded && opened.value != null) {
+        showMessage('Cannot open $fileName: ${opened.value}');
+      }
     } else {
       showMessage(
           'Saved ${target.uri.pathSegments.last} (${formatSize(target.lengthSync())})',
           action: SnackBarAction(label: 'Open', onPressed: openIt));
     }
     return target;
-  }
-
-  /// `name`, or `name (1)`, `name (2)`, … if that file already exists.
-  File _freeName(Directory dir, String name) {
-    var file = File('${dir.path}/$name');
-    final dot = name.lastIndexOf('.');
-    final stem = dot > 0 ? name.substring(0, dot) : name;
-    final ext = dot > 0 ? name.substring(dot) : '';
-    for (var i = 1; file.existsSync(); i++) {
-      file = File('${dir.path}/$stem ($i)$ext');
-    }
-    return file;
   }
 
   /// Shows the item's public links and lets the user add or delete one.

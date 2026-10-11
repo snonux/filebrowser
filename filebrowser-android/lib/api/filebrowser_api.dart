@@ -179,25 +179,31 @@ class FileBrowserApi {
   // ---------------------------------------------------------------------------
 
   /// Lists a directory, or fetches one file (with `content` for text files).
-  Future<Resource> fetch(String path) => _call(() async {
-        final res =
-            await _dio.get<Map<String, dynamic>>(_api('resources', path));
+  Future<Resource> fetch(String path, {CancelToken? cancelToken}) =>
+      _call(() async {
+        final res = await _dio.get<Map<String, dynamic>>(
+            _api('resources', path),
+            cancelToken: cancelToken);
         return Resource.fromJson(res.data!);
       });
 
-  Future<void> createFolder(String path) => _call(() async {
+  Future<void> createFolder(String path, {CancelToken? cancelToken}) =>
+      _call(() async {
         await _dio.post<void>('${_api('resources', path)}/',
-            queryParameters: {'override': 'false'});
+            cancelToken: cancelToken, queryParameters: {'override': 'false'});
       });
 
   /// Creates a file with [content] in one request. Use [TusUploader] for
   /// anything but small files.
   Future<void> createFile(String path,
-          {List<int> content = const [], bool override = false}) =>
+          {List<int> content = const [],
+          bool override = false,
+          CancelToken? cancelToken}) =>
       _call(() async {
         await _dio.post<void>(
           _api('resources', path),
           queryParameters: {'override': '$override'},
+          cancelToken: cancelToken,
           data: Uint8List.fromList(content),
           options: Options(
               headers: {Headers.contentTypeHeader: 'application/octet-stream'}),
@@ -216,29 +222,35 @@ class FileBrowserApi {
         );
       });
 
-  Future<void> delete(String path) => _call(() async {
-        await _dio.delete<void>(_api('resources', path));
+  Future<void> delete(String path, {CancelToken? cancelToken}) =>
+      _call(() async {
+        await _dio.delete<void>(_api('resources', path),
+            cancelToken: cancelToken);
       });
 
   /// Moves or renames [from] to [to].
-  Future<void> move(String from, String to, {bool override = false}) =>
-      _patch('rename', from, to, override: override);
+  Future<void> move(String from, String to,
+          {bool override = false, CancelToken? cancelToken}) =>
+      _patch('rename', from, to, override: override, cancelToken: cancelToken);
 
-  Future<void> copy(String from, String to, {bool override = false}) =>
-      _patch('copy', from, to, override: override);
+  Future<void> copy(String from, String to,
+          {bool override = false, CancelToken? cancelToken}) =>
+      _patch('copy', from, to, override: override, cancelToken: cancelToken);
 
   Future<void> _patch(String action, String from, String to,
-          {required bool override}) =>
+          {required bool override, CancelToken? cancelToken}) =>
       _call(() async {
         // The server unescapes `destination` once more after the query string
         // is decoded, so it is encoded twice here. Otherwise names with `%` or
         // `+` would arrive changed.
-        await _dio.patch<void>(_api('resources', from), queryParameters: {
-          'action': action,
-          'destination': Uri.encodeComponent(normalizePath(to)),
-          'override': '$override',
-          'rename': 'false',
-        });
+        await _dio.patch<void>(_api('resources', from),
+            cancelToken: cancelToken,
+            queryParameters: {
+              'action': action,
+              'destination': Uri.encodeComponent(normalizePath(to)),
+              'override': '$override',
+              'rename': 'false',
+            });
       });
 
   /// Computes a checksum on the server (`md5`, `sha1`, `sha256`, `sha512`).
@@ -438,11 +450,13 @@ class FileBrowserApi {
 
   /// Starts a tus upload of [length] bytes to [path]. A 409 means the file
   /// exists and [override] was false.
-  Future<void> tusCreate(String path, int length, {bool override = false}) =>
+  Future<void> tusCreate(String path, int length,
+          {bool override = false, CancelToken? cancelToken}) =>
       _call(() async {
         await _dio.post<void>(
           _api('tus', path),
           queryParameters: {'override': '$override'},
+          cancelToken: cancelToken,
           options: Options(headers: {
             'Tus-Resumable': '1.0.0',
             'Upload-Length': '$length',
@@ -451,8 +465,10 @@ class FileBrowserApi {
       });
 
   /// Returns how many bytes of [path] the server already has.
-  Future<int> tusOffset(String path) => _call(() async {
+  Future<int> tusOffset(String path, {CancelToken? cancelToken}) =>
+      _call(() async {
         final res = await _dio.head<void>(_api('tus', path),
+            cancelToken: cancelToken,
             options: Options(headers: {'Tus-Resumable': '1.0.0'}));
         return int.parse(res.headers.value('upload-offset') ?? '0');
       });
@@ -487,7 +503,7 @@ class FileBrowserApi {
     CancelToken? cancelToken,
   }) async {
     final length = await file.length();
-    await tusCreate(path, length, override: override);
+    await tusCreate(path, length, override: override, cancelToken: cancelToken);
     onProgress?.call(0, length);
     final raf = await file.open();
     try {
@@ -512,7 +528,7 @@ class FileBrowserApi {
             rethrow;
           }
           await Future<void>.delayed(Duration(seconds: failures));
-          offset = await tusOffset(path);
+          offset = await tusOffset(path, cancelToken: cancelToken);
         }
         onProgress?.call(offset, length);
       }
