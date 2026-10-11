@@ -58,25 +58,32 @@ func (o Operations) Delete(ctx context.Context, src string) error {
 	if err := o.CheckDescendants(src, ""); err != nil {
 		return err
 	}
-	o.cleanup(file.Path)
 	if err := o.invalidate(ctx, file); err != nil {
 		return err
 	}
 	return o.run(func() error {
-		unlock, err := o.lock(ctx)
-		if err != nil {
+		if err := o.remove(ctx, src); err != nil {
 			return err
 		}
-		defer unlock()
-		if !o.Checker.Check(src) {
-			return fberrors.ErrPermissionDenied
-		}
-		if err := o.CheckDescendants(src, ""); err != nil {
-			return err
-		}
-		o.retire(src)
-		return o.Fs.RemoveAll(src)
+		o.cleanup(file.Path)
+		return nil
 	}, "delete", src, "")
+}
+
+func (o Operations) remove(ctx context.Context, src string) error {
+	unlock, err := o.lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if !o.Checker.Check(src) {
+		return fberrors.ErrPermissionDenied
+	}
+	if err := o.CheckDescendants(src, ""); err != nil {
+		return err
+	}
+	o.retire(src)
+	return o.Fs.RemoveAll(src)
 }
 
 // Rename moves src to dst, optionally replacing an existing destination. Both
