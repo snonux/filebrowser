@@ -41,11 +41,35 @@ func (f *FileCache) Store(_ context.Context, key string, value []byte) error {
 		return err
 	}
 
-	if err := afero.WriteFile(f.fs, fileName, value, 0700); err != nil {
+	// Publish only a complete, closed file. Readers can keep using the previous
+	// entry while this same-directory temporary file is being written.
+	tmp, err := afero.TempFile(f.fs, filepath.Dir(fileName), ".cache-*")
+	if err != nil {
 		return err
 	}
+	// Some filesystems change the open file's name when it is renamed.
+	tmpName := tmp.Name()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tmp.Close()
+		}
+		_ = f.fs.Remove(tmpName)
+	}()
 
-	return nil
+	n, err := tmp.Write(value)
+	if err != nil {
+		return err
+	}
+	if n != len(value) {
+		return io.ErrShortWrite
+	}
+	err = tmp.Close()
+	closed = true
+	if err != nil {
+		return err
+	}
+	return f.fs.Rename(tmpName, fileName)
 }
 
 func (f *FileCache) Load(_ context.Context, key string) (value []byte, exist bool, err error) {
@@ -53,7 +77,7 @@ func (f *FileCache) Load(_ context.Context, key string) (value []byte, exist boo
 	if err != nil || !ok {
 		return nil, ok, err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	value, err = io.ReadAll(r)
 	if err != nil {
