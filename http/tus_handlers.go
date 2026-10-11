@@ -86,6 +86,14 @@ func tusPostHandler(cache UploadCache) handleFunc {
 			return http.StatusForbidden, nil
 		}
 
+		uploadLength, err := getUploadLength(r)
+		if err != nil {
+			return http.StatusBadRequest, err
+		}
+		if uploadLength < 0 {
+			return http.StatusBadRequest, fmt.Errorf("upload length must not be negative")
+		}
+
 		file, err := files.NewFileInfo(&files.FileOptions{
 			Fs:         d.user.Fs,
 			Path:       r.URL.Path,
@@ -99,7 +107,7 @@ func tusPostHandler(cache UploadCache) handleFunc {
 			dirPath := filepath.Dir(r.URL.Path)
 			if _, statErr := d.user.Fs.Stat(dirPath); os.IsNotExist(statErr) {
 				if mkdirErr := d.user.Fs.MkdirAll(dirPath, d.settings.DirMode); mkdirErr != nil {
-					return http.StatusInternalServerError, err
+					return http.StatusInternalServerError, mkdirErr
 				}
 			}
 		case err != nil:
@@ -144,11 +152,6 @@ func tusPostHandler(cache UploadCache) handleFunc {
 		})
 		if err != nil {
 			return errToStatus(err), err
-		}
-
-		uploadLength, err := getUploadLength(r)
-		if err != nil || uploadLength < 0 {
-			return http.StatusBadRequest, fmt.Errorf("invalid upload length: %w", err)
 		}
 
 		// Enables the user to utilize the PATCH endpoint for uploading file data.
