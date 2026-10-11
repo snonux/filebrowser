@@ -134,11 +134,11 @@ const deleteLink = async (event: Event, link: any) => {
 
   layoutStore.showHover({
     prompt: "share-delete",
-    confirm: () => {
+    confirm: async () => {
       layoutStore.closeHovers();
 
       try {
-        api.remove(link.hash);
+        await api.remove(link.hash);
         links.value = links.value.filter((item) => item.hash !== link.hash);
         $showSuccess(t("settings.shareDeleted"));
       } catch (err) {
