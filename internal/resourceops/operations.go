@@ -39,6 +39,7 @@ type Operations struct {
 	Warn                  func(error)
 	Run                   func(func() error, string, string, string) error
 	Lock                  func() func()
+	LockContext           func(context.Context) (func(), error)
 	RetireTree            func(string)
 	RetireDestination     func(string)
 	RetireCopyDestination func(string, string) error
@@ -62,7 +63,10 @@ func (o Operations) Delete(ctx context.Context, src string) error {
 		return err
 	}
 	return o.run(func() error {
-		unlock := o.lock()
+		unlock, err := o.lock(ctx)
+		if err != nil {
+			return err
+		}
 		defer unlock()
 		if !o.Checker.Check(src) {
 			return fberrors.ErrPermissionDenied
@@ -96,7 +100,7 @@ func (o Operations) Rename(ctx context.Context, src, dst string, override bool) 
 		if err := o.invalidate(ctx, file); err != nil {
 			return err
 		}
-		if err := o.move(src, dst, override); err != nil {
+		if err := o.move(ctx, src, dst, override); err != nil {
 			return err
 		}
 		o.cleanup(src)
@@ -144,8 +148,11 @@ func CheckParent(src, dst string) error {
 	return nil
 }
 
-func (o Operations) move(src, dst string, override bool) error {
-	unlock := o.lock()
+func (o Operations) move(ctx context.Context, src, dst string, override bool) error {
+	unlock, err := o.lock(ctx)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 	if !o.Checker.Check(src) || !o.Checker.Check(dst) {
 		return fberrors.ErrPermissionDenied
@@ -208,11 +215,14 @@ func (o Operations) run(fn func() error, action, src, dst string) error {
 	return fn()
 }
 
-func (o Operations) lock() func() {
-	if o.Lock != nil {
-		return o.Lock()
+func (o Operations) lock(ctx context.Context) (func(), error) {
+	if o.LockContext != nil {
+		return o.LockContext(ctx)
 	}
-	return func() {}
+	if o.Lock != nil {
+		return o.Lock(), nil
+	}
+	return func() {}, nil
 }
 
 func (o Operations) retire(src string) {

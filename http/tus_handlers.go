@@ -30,7 +30,7 @@ const maxPatchDrainBytes = 32 << 20 // 32MB
 // error instead of the status we replied with. The client then cannot tell a
 // conflict from a network fault, retries blindly, and the upload stalls.
 func drainRequestBody(r *http.Request) {
-	if r.Body == nil {
+	if r.Body == nil || r.Context().Err() != nil {
 		return
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, maxPatchDrainBytes))
@@ -43,7 +43,8 @@ func keepUploadActive(ctx context.Context, cache UploadCache, cacheKey, key stri
 	if _, local := cache.(interface{ uploadCacheOwner() *memoryUploadCache }); local && generation == nil {
 		return func() {}
 	}
-	stop := make(chan struct{})
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	touch := func() bool {
 		if ctx.Err() != nil {
 			return false
@@ -51,21 +52,21 @@ func keepUploadActive(ctx context.Context, cache UploadCache, cacheKey, key stri
 		if !patchGenerationCurrent(key, generation) {
 			return false
 		}
-		cache.Touch(cacheKey)
+		cache.Touch(ctx, cacheKey)
 		return true
 	}
 	// Refresh before blocking, rather than waiting for the first tick.
 	if !touch() {
+		cancel()
 		return func() {}
 	}
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
-				return
-			case <-stop:
 				return
 			case <-ticker.C:
 				if !touch() {
@@ -74,7 +75,7 @@ func keepUploadActive(ctx context.Context, cache UploadCache, cacheKey, key stri
 			}
 		}
 	}()
-	return func() { close(stop) }
+	return func() { cancel(); <-done }
 }
 
 // tusPatchesInFlight holds the uploads that currently have a PATCH being
@@ -114,7 +115,9 @@ func tusPostHandler(cache UploadCache) handleFunc {
 			return http.StatusBadRequest, fmt.Errorf("upload length must not be negative")
 		}
 
-		uploadMutations.barrier.Lock()
+		if err := uploadMutations.barrier.acquire(r.Context(), mutationReaders); err != nil {
+			return http.StatusRequestTimeout, err
+		}
 		unlockMutation := uploadMutations.barrier.Unlock
 		defer func() {
 			if unlockMutation != nil {
@@ -164,7 +167,7 @@ func tusPostHandler(cache UploadCache) handleFunc {
 			fileFlags |= os.O_TRUNC
 		}
 
-		retireUpload(key)
+		retireUpload(r.Context(), key)
 		openFile, err := d.user.Fs.OpenFile(r.URL.Path, fileFlags, d.settings.FileMode)
 		if err != nil {
 			return errToStatus(err), err
@@ -187,13 +190,13 @@ func tusPostHandler(cache UploadCache) handleFunc {
 		if uploadLength == 0 {
 			// Empty uploads are complete at creation. Never give eviction
 			// ownership of the finished file, including when replacing an upload.
-			cache.Complete(file.RealPath())
+			cache.Complete(r.Context(), file.RealPath())
 		} else {
 			owned, err := openFile.Stat()
 			if err != nil {
 				return errToStatus(err), err
 			}
-			registerOwnedUpload(cache, key, uploadPathKey(d, r.URL.Path), file.RealPath(), uploadLength, d.user.Fs, r.URL.Path, owned)
+			registerOwnedUpload(r.Context(), cache, key, uploadPathKey(d, r.URL.Path), file.RealPath(), uploadLength, d.user.Fs, r.URL.Path, owned)
 		}
 
 		basePath := "/" + strings.Trim(strings.TrimSpace(d.server.BaseURL), "/")
@@ -230,7 +233,7 @@ func tusHeadHandler(cache UploadCache) handleFunc {
 			return errToStatus(err), err
 		}
 
-		uploadLength, err := cache.GetLength(file.RealPath())
+		uploadLength, err := cache.GetLength(r.Context(), file.RealPath())
 		if err != nil {
 			return http.StatusNotFound, err
 		}
@@ -282,7 +285,7 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 	if value, ok := uploadMutations.entries.Load(originalKey); ok {
 		generation = value.(*uploadGeneration)
 	}
-	uploadLength, cacheKey, status, err := inspectPatchUpload(d, r.URL.Path, cache, uploadOffset, generation)
+	uploadLength, cacheKey, status, err := inspectPatchUpload(r.Context(), d, r.URL.Path, cache, uploadOffset, generation)
 	if status != 0 {
 		return status, err
 	}
@@ -295,7 +298,10 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 	stop := keepUploadActive(r.Context(), cache, cacheKey, originalKey, generation)
 	defer stop()
 
-	key, unlockMutation := lockFileUploadMutation(d, r.URL.Path)
+	key, unlockMutation, err := lockFileUploadMutation(r.Context(), d, r.URL.Path)
+	if err != nil {
+		return http.StatusRequestTimeout, err
+	}
 	defer func() {
 		if unlockMutation != nil {
 			unlockMutation()
@@ -309,7 +315,7 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 	}
 	// The directory operation may have replaced or retired the file while we
 	// waited. Recheck the original request offset under the mutation lock.
-	uploadLength, cacheKey, status, err = inspectPatchUpload(d, r.URL.Path, cache, uploadOffset, generation)
+	uploadLength, cacheKey, status, err = inspectPatchUpload(r.Context(), d, r.URL.Path, cache, uploadOffset, generation)
 	if status != 0 {
 		return status, err
 	}
@@ -372,8 +378,8 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 	w.Header().Set("Upload-Offset", strconv.FormatInt(newOffset, 10))
 
 	if newOffset >= uploadLength {
-		retireUpload(key)
-		cache.Complete(cacheKey)
+		retireUpload(r.Context(), key)
+		cache.Complete(r.Context(), cacheKey)
 		unlockMutation()
 		unlockMutation = nil
 		_ = d.RunHook(func() error { return nil }, "upload", r.URL.Path, "", d.user)
@@ -384,7 +390,7 @@ func tusPatchUpload(w http.ResponseWriter, r *http.Request, d *data, cache Uploa
 
 // inspectPatchUpload rejects invalid chunks before starting their keepalive.
 // Call it again under the mutation lock before opening the file for writing.
-func inspectPatchUpload(d *data, path string, cache UploadCache, offset int64, generation *uploadGeneration) (int64, string, int, error) {
+func inspectPatchUpload(ctx context.Context, d *data, path string, cache UploadCache, offset int64, generation *uploadGeneration) (int64, string, int, error) {
 	file, err := files.NewFileInfo(&files.FileOptions{
 		Fs:         d.user.Fs,
 		Path:       path,
@@ -412,7 +418,7 @@ func inspectPatchUpload(d *data, path string, cache UploadCache, offset int64, g
 	if generation != nil {
 		cacheKey = generation.cacheKey
 	}
-	length, err := cache.GetLength(cacheKey)
+	length, err := cache.GetLength(ctx, cacheKey)
 	if err != nil {
 		return 0, "", http.StatusNotFound, err
 	}
@@ -448,7 +454,10 @@ func tusDeleteHandler(cache UploadCache) handleFunc {
 			return http.StatusForbidden, nil
 		}
 
-		key, unlock := lockFileUploadMutation(d, r.URL.Path)
+		key, unlock, err := lockFileUploadMutation(r.Context(), d, r.URL.Path)
+		if err != nil {
+			return http.StatusRequestTimeout, err
+		}
 		defer unlock()
 
 		file, err := files.NewFileInfo(&files.FileOptions{
@@ -463,18 +472,18 @@ func tusDeleteHandler(cache UploadCache) handleFunc {
 			return errToStatus(err), err
 		}
 
-		_, err = cache.GetLength(file.RealPath())
+		_, err = cache.GetLength(r.Context(), file.RealPath())
 		if err != nil {
 			return http.StatusNotFound, err
 		}
 
-		retireUpload(key)
+		retireUpload(r.Context(), key)
 		err = d.user.Fs.Remove(r.URL.Path)
 		if err != nil {
 			return errToStatus(err), err
 		}
 
-		cache.Complete(file.RealPath())
+		cache.Complete(r.Context(), file.RealPath())
 
 		return http.StatusNoContent, nil
 	})

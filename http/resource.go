@@ -91,7 +91,7 @@ func resourceDeleteHandler(fileCache FileCache) handleFunc {
 			return http.StatusForbidden, nil
 		}
 
-		err := resourceOperations(d, fileCache).Delete(r.Context(), r.URL.Path)
+		err := resourceOperations(r.Context(), d, fileCache).Delete(r.Context(), r.URL.Path)
 		if err != nil {
 			return errToStatus(err), err
 		}
@@ -146,7 +146,10 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 		}
 
 		err = d.RunHook(func() error {
-			key, unlock := lockFileUploadMutation(d, r.URL.Path)
+			key, unlock, err := lockFileUploadMutation(r.Context(), d, r.URL.Path)
+			if err != nil {
+				return err
+			}
 			defer unlock()
 			if !d.Check(r.URL.Path) {
 				return fberrors.ErrPermissionDenied
@@ -164,7 +167,7 @@ func resourcePostHandler(fileCache FileCache) handleFunc {
 			} else if !os.IsNotExist(statErr) {
 				return statErr
 			}
-			retireUpload(key)
+			retireUpload(r.Context(), key)
 			info, writeErr := writeFile(d.user.Fs, r.URL.Path, r.Body, d.settings.FileMode, d.settings.DirMode)
 			if writeErr != nil {
 				_ = d.user.Fs.Remove(r.URL.Path)
@@ -199,7 +202,10 @@ var resourcePutHandler = withUser(func(w http.ResponseWriter, r *http.Request, d
 	}
 
 	err = d.RunHook(func() error {
-		key, unlock := lockFileUploadMutation(d, r.URL.Path)
+		key, unlock, err := lockFileUploadMutation(r.Context(), d, r.URL.Path)
+		if err != nil {
+			return err
+		}
 		defer unlock()
 		if !d.Check(r.URL.Path) {
 			return fberrors.ErrPermissionDenied
@@ -207,7 +213,7 @@ var resourcePutHandler = withUser(func(w http.ResponseWriter, r *http.Request, d
 		if _, err := d.user.Fs.Stat(r.URL.Path); err != nil {
 			return err
 		}
-		retireUpload(key)
+		retireUpload(r.Context(), key)
 		info, writeErr := writeFile(d.user.Fs, r.URL.Path, r.Body, d.settings.FileMode, d.settings.DirMode)
 		if writeErr != nil {
 			return writeErr
@@ -279,12 +285,14 @@ func resourcePatchHandler(fileCache FileCache) handleFunc {
 		}
 
 		if action == "rename" {
-			err = resourceOperations(d, fileCache).Rename(r.Context(), src, dst, r.URL.Query().Get("override") == "true")
+			err = resourceOperations(r.Context(), d, fileCache).Rename(r.Context(), src, dst, r.URL.Query().Get("override") == "true")
 			return errToStatus(err), err
 		}
 
 		err = d.RunHook(func() error {
-			uploadMutations.barrier.Lock()
+			if err := uploadMutations.barrier.acquire(r.Context(), mutationReaders); err != nil {
+				return err
+			}
 			defer uploadMutations.barrier.Unlock()
 			if !d.Check(src) || !d.Check(dst) {
 				return fberrors.ErrPermissionDenied
@@ -303,7 +311,7 @@ func resourcePatchHandler(fileCache FileCache) handleFunc {
 			if dstErr == nil && r.URL.Query().Get("override") != "true" && !(action == "rename" && os.SameFile(srcInfo, dstInfo)) {
 				return fberrors.ErrExist
 			}
-			return patchAction(action, src, dst, d)
+			return patchAction(r.Context(), action, src, dst, d)
 		}, action, src, dst, d.user)
 
 		return errToStatus(err), err
@@ -386,14 +394,14 @@ func delThumbs(ctx context.Context, fileCache FileCache, file *files.FileInfo) e
 	return nil
 }
 
-func patchAction(action, src, dst string, d *data) error {
+func patchAction(ctx context.Context, action, src, dst string, d *data) error {
 	switch action {
 	case "copy":
 		if !d.user.Perm.Create {
 			return fberrors.ErrPermissionDenied
 		}
 
-		if err := retireCopyDestination(d, src, dst); err != nil {
+		if err := retireCopyDestination(ctx, d, src, dst); err != nil {
 			return err
 		}
 		return fileutils.Copy(d.user.Fs, src, dst, d.settings.FileMode, d.settings.DirMode)

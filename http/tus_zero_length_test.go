@@ -1,6 +1,7 @@
 package fbhttp
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,7 +24,7 @@ type shortLivedUploadCache struct {
 	expired  chan struct{}
 }
 
-func (c *shortLivedUploadCache) Register(key string, size int64, remove func() error) {
+func (c *shortLivedUploadCache) Register(ctx context.Context, key string, size int64, remove func() error) {
 	c.mu.Lock()
 	c.removals = append(c.removals, remove)
 	c.mu.Unlock()

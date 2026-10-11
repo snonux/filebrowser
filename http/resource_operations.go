@@ -8,7 +8,7 @@ import (
 	"github.com/filebrowser/filebrowser/v2/internal/resourceops"
 )
 
-func resourceOperations(d *data, cache FileCache) resourceops.Operations {
+func resourceOperations(ctx context.Context, d *data, cache FileCache) resourceops.Operations {
 	return resourceops.Operations{
 		Fs: d.user.Fs, Checker: d,
 		DeleteAllowed: d.user.Perm.Delete, RenameAllowed: d.user.Perm.Rename,
@@ -20,10 +20,15 @@ func resourceOperations(d *data, cache FileCache) resourceops.Operations {
 		Warn: func(err error) {
 			log.Printf("WARNING: Error(s) occurred while deleting associated shares with file: %s", err)
 		},
-		Run:                   func(fn func() error, action, src, dst string) error { return d.RunHook(fn, action, src, dst, d.user) },
-		Lock:                  func() func() { uploadMutations.barrier.Lock(); return uploadMutations.barrier.Unlock },
-		RetireTree:            func(src string) { retireUploadsUnder(uploadLockKey(d, src)) },
-		RetireDestination:     func(dst string) { retireUploadsUnder(uploadPathKey(d, dst)) },
-		RetireCopyDestination: func(src, dst string) error { return retireCopyDestination(d, src, dst) },
+		Run: func(fn func() error, action, src, dst string) error { return d.RunHook(fn, action, src, dst, d.user) },
+		LockContext: func(ctx context.Context) (func(), error) {
+			if err := uploadMutations.barrier.acquire(ctx, mutationReaders); err != nil {
+				return nil, err
+			}
+			return uploadMutations.barrier.Unlock, nil
+		},
+		RetireTree:            func(src string) { retireUploadsUnder(ctx, uploadLockKey(d, src)) },
+		RetireDestination:     func(dst string) { retireUploadsUnder(ctx, uploadPathKey(d, dst)) },
+		RetireCopyDestination: func(src, dst string) error { return retireCopyDestination(ctx, d, src, dst) },
 	}
 }

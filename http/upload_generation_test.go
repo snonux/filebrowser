@@ -33,11 +33,11 @@ func (c *capturedUploadCache) uploadCacheOwner() *memoryUploadCache {
 	return c.UploadCache.(*memoryUploadCache)
 }
 
-func (c *capturedUploadCache) Register(key string, size int64, remove func() error) {
+func (c *capturedUploadCache) Register(ctx context.Context, key string, size int64, remove func() error) {
 	c.mu.Lock()
 	c.removals = append(c.removals, remove)
 	c.mu.Unlock()
-	c.UploadCache.Register(key, size, remove)
+	c.UploadCache.Register(ctx, key, size, remove)
 }
 
 func (c *capturedUploadCache) removal() func() error {
@@ -431,7 +431,7 @@ func TestResourceDirectoryMutationRetiresUploadDescendants(t *testing.T) {
 				t.Fatalf("cache keys = %v", registeredKeys)
 			}
 			registeredKey := registeredKeys[0]
-			if length, err := memory.GetLength(registeredKey); err != nil || length != 8 {
+			if length, err := memory.GetLength(context.Background(), registeredKey); err != nil || length != 8 {
 				t.Fatalf("descendant upload was not active: length=%d err=%v", length, err)
 			}
 			var status int
@@ -452,7 +452,7 @@ func TestResourceDirectoryMutationRetiresUploadDescendants(t *testing.T) {
 			if status != http.StatusOK && status != http.StatusNoContent {
 				t.Fatalf("mutation = %d", status)
 			}
-			if _, err := memory.GetLength(registeredKey); err == nil {
+			if _, err := memory.GetLength(context.Background(), registeredKey); err == nil {
 				t.Fatal("descendant upload remained active after mutation")
 			}
 			if err := os.MkdirAll(filepath.Join(scope, "dir"), 0o755); err != nil {
@@ -763,8 +763,8 @@ type touchedUploadCache struct {
 	touched chan string
 }
 
-func (c *touchedUploadCache) Touch(key string) {
-	c.memoryUploadCache.Touch(key)
+func (c *touchedUploadCache) Touch(ctx context.Context, key string) {
+	c.memoryUploadCache.Touch(ctx, key)
 	select {
 	case c.touched <- key:
 	default:
@@ -873,7 +873,7 @@ func TestUploadKeepaliveStopsOnCancellationOrRetirement(t *testing.T) {
 			key := filepath.Join(t.TempDir(), "upload")
 			generation := &uploadGeneration{cache: cache, cacheKey: key, owner: memory}
 			uploadMutations.entries.Store(key, generation)
-			memory.Register(key, 8, nil)
+			memory.Register(context.Background(), key, 8, nil)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			stop := keepUploadActive(ctx, cache, key, key, generation)
@@ -885,7 +885,7 @@ func TestUploadKeepaliveStopsOnCancellationOrRetirement(t *testing.T) {
 				uploadMutations.entries.Delete(key)
 			}
 			// Neither cancellation nor retirement may refresh a later entry.
-			memory.Register(key, 9, nil)
+			memory.Register(context.Background(), key, 9, nil)
 			select {
 			case <-cache.touched:
 				t.Fatal("stopped upload worker touched cache")
@@ -940,7 +940,7 @@ func TestInvalidPatchDoesNotStartKeepalive(t *testing.T) {
 				patch.Header.Set("Upload-Offset", "1")
 				want = http.StatusConflict
 			case "absent":
-				memory.Complete(memory.cache.Keys()[0])
+				memory.Complete(context.Background(), memory.cache.Keys()[0])
 				want = http.StatusNotFound
 			}
 			patch.Header.Set("X-Auth", signToken(t, perm, key))
@@ -973,15 +973,15 @@ func (c *pausedPatchCache) pause(phase string) {
 	}
 }
 
-func (c *pausedPatchCache) GetLength(key string) (int64, error) {
-	length, err := c.memoryUploadCache.GetLength(key)
+func (c *pausedPatchCache) GetLength(ctx context.Context, key string) (int64, error) {
+	length, err := c.memoryUploadCache.GetLength(ctx, key)
 	c.pause("validation")
 	return length, err
 }
 
-func (c *pausedPatchCache) Touch(key string) {
+func (c *pausedPatchCache) Touch(ctx context.Context, key string) {
 	c.pause("keepalive")
-	c.memoryUploadCache.Touch(key)
+	c.memoryUploadCache.Touch(ctx, key)
 }
 
 func TestPatchPinsAdmittedGeneration(t *testing.T) {
@@ -1076,7 +1076,7 @@ func TestPatchPinsAdmittedGeneration(t *testing.T) {
 					}
 					if mutation == "replacement" {
 						// The rejected PATCH must not complete or invalidate the fresh entry.
-						if length, err := memory.GetLength(cacheKey); err != nil || length != 8 {
+						if length, err := memory.GetLength(context.Background(), cacheKey); err != nil || length != 8 {
 							t.Fatalf("replacement upload = %d, %v", length, err)
 						}
 					}
