@@ -24,6 +24,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:video_player/video_player.dart';
 
 const serverUrl = String.fromEnvironment('FB_E2E_URL');
 const proxyUrl = String.fromEnvironment('FB_E2E_PROXY_URL');
@@ -226,6 +227,7 @@ String sha256Of(List<int> bytes) => sha256.convert(bytes).toString();
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  WidgetController.hitTestWarningShouldBeFatal = true;
 
   setUpAll(() async {
     expect(serverUrl, isNotEmpty, reason: 'Run via test/e2e/run_e2e.sh');
@@ -443,19 +445,60 @@ void main() {
     await waitFor(tester, find.text('1 / 2'));
     await screenshot(tester, '8-pdf');
     await back(tester);
+    // Action snackbars can remain visible with accessibility navigation.
+    // Dismiss the download notification using its normal swipe gesture so it
+    // does not cover the player's bottom controls.
+    final notification = find.byType(SnackBar);
+    if (notification.evaluate().isNotEmpty) {
+      await tester.drag(notification, const Offset(0, 200));
+      await waitUntil(tester, () async => notification.evaluate().isEmpty,
+          'download notification dismissed');
+    }
     await tapText(tester, 'tone.wav');
     if (Platform.isLinux) {
       // video_player has no Linux implementation, so the desktop build shows
       // the fallback, which hands the file to another app.
       await waitFor(tester, find.text('This file cannot be played here.'));
       await tapText(tester, 'Open with another app');
-      await waitUntil(tester, () async => device.opened.length == 2,
-          'tone.wav opened');
+      await waitUntil(
+          tester, () async => device.opened.length == 2, 'tone.wav opened');
       expect(device.opened.last.path, endsWith('/downloads/tone.wav'));
     } else {
-      await waitFor(tester, find.byTooltip('Pause'));
-      await tap(tester, find.byTooltip('Pause'));
-      await waitFor(tester, find.byTooltip('Play'));
+      // A download snackbar can still cover the bottom controls after navigation.
+      // Wait for a hittable control, then verify the real plugin paused while
+      // the fixture still has time left, rather than merely reaching its end.
+      final pause = find.byTooltip('Pause').hitTestable();
+      await waitFor(tester, pause);
+      final player = tester
+          .widget<VideoProgressIndicator>(find.byType(VideoProgressIndicator))
+          .controller;
+      expect(player.value.isPlaying, isTrue);
+      final startPosition = await player.position;
+      expect(startPosition, isNotNull);
+      await waitUntil(tester, () async {
+        final position = await player.position;
+        return position != null &&
+            position - startPosition! >= const Duration(milliseconds: 200);
+      }, 'native audio playback advances', timeout: const Duration(seconds: 5));
+      final playingPosition = await player.position;
+      expect(playingPosition, isNotNull);
+      expect(playingPosition,
+          lessThan(player.value.duration - const Duration(seconds: 5)));
+      await tap(tester, pause);
+      await waitFor(tester, find.byTooltip('Play').hitTestable());
+      expect(player.value.isPlaying, isFalse);
+      expect(player.value.isCompleted, isFalse);
+      // Query the native player: the Dart value is updated optimistically and
+      // its position timer stops as soon as pause is requested.
+      final pausedPosition = await player.position;
+      expect(pausedPosition, isNotNull);
+      await tester.pump(const Duration(seconds: 1));
+      final laterPosition = await player.position;
+      expect(laterPosition, isNotNull);
+      expect((laterPosition! - pausedPosition!).abs(),
+          lessThanOrEqualTo(const Duration(milliseconds: 200)));
+      expect(laterPosition,
+          lessThan(player.value.duration - const Duration(seconds: 5)));
     }
     await back(tester);
     await back(tester);

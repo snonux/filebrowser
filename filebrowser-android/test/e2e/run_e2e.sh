@@ -83,11 +83,12 @@ pdf += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
 pdf += b"".join(b"%010d 00000 n \n" % o for o in offsets)
 pdf += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
 open(sys.argv[1] + "/guide.pdf", "wb").write(pdf)
-# Two seconds of a 440 Hz tone.
+# Thirty seconds of a 440 Hz tone, so automatic completion cannot mask
+# a missed pause-button tap in the native playback check.
 with wave.open(sys.argv[1] + "/tone.wav", "wb") as w:
     w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
     w.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * i / 8000)))
-                           for i in range(16000)))
+                           for i in range(30 * 8000)))
 PY
 
 db="$WORK/fb.db"
