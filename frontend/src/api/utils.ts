@@ -1,5 +1,10 @@
 import { useAuthStore } from "@/stores/auth";
-import { renew, logout } from "@/utils/auth";
+import {
+  renew,
+  logout,
+  captureAuthSession,
+  isCurrentAuthSession,
+} from "@/utils/auth";
 import { baseURL } from "@/utils/constants";
 import { encodePath } from "@/utils/url";
 
@@ -20,6 +25,7 @@ export async function fetchURL(
   auth = true
 ): Promise<Response> {
   const authStore = useAuthStore();
+  const session = captureAuthSession();
 
   opts = opts || {};
   opts.headers = opts.headers || {};
@@ -42,8 +48,12 @@ export async function fetchURL(
     throw new StatusError("000 No connection", 0);
   }
 
-  if (auth && res.headers.get("X-Renew-Token") === "true") {
-    await renew(authStore.jwt);
+  if (
+    auth &&
+    isCurrentAuthSession(session) &&
+    res.headers.get("X-Renew-Token") === "true"
+  ) {
+    await renew(session.jwt);
   }
 
   if (res.status < 200 || res.status > 299) {
@@ -53,7 +63,7 @@ export async function fetchURL(
       res.status
     );
 
-    if (auth && res.status == 401) {
+    if (auth && res.status == 401 && isCurrentAuthSession(session)) {
       logout();
     }
 

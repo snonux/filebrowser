@@ -6,9 +6,31 @@ import { authMethod, baseURL, noAuth, logoutPage } from "./constants";
 import { StatusError } from "@/api/utils";
 import { setSafeTimeout } from "@/api/utils";
 
+// Auth callbacks may outlive logout or a replacement login, even when the
+// replacement token is identical to the old one.
+let sessionGeneration = 0;
+let pendingLoginGeneration: number | undefined;
+
+export function captureAuthSession() {
+  return { generation: sessionGeneration, jwt: useAuthStore().jwt };
+}
+
+export function isCurrentAuthSession(
+  session: ReturnType<typeof captureAuthSession>
+) {
+  return (
+    pendingLoginGeneration === undefined &&
+    session.generation === sessionGeneration &&
+    session.jwt === useAuthStore().jwt
+  );
+}
+
 export function parseToken(token: string) {
   // falsy or malformed jwt will throw InvalidTokenError
   const data = jwtDecode<JwtPayload & { user: IUser }>(token);
+
+  sessionGeneration++;
+  pendingLoginGeneration = undefined;
 
   document.cookie = `auth=${token}; Path=/; SameSite=Strict;`;
 
@@ -53,29 +75,56 @@ export async function login(
   password: string,
   recaptcha: string
 ) {
+  // A new login attempt takes ownership from any earlier auth request.
+  sessionGeneration++;
+  const session = captureAuthSession();
+  pendingLoginGeneration = session.generation;
   const data = { username, password, recaptcha };
 
-  const res = await fetch(`${baseURL}/api/login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  });
+  try {
+    const res = await fetch(`${baseURL}/api/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
 
-  const body = await res.text();
+    const body = await res.text();
 
-  if (res.status === 200) {
-    parseToken(body);
-  } else {
-    throw new StatusError(
-      body || `${res.status} ${res.statusText}`,
-      res.status
-    );
+    if (
+      session.generation !== sessionGeneration ||
+      session.jwt !== useAuthStore().jwt
+    )
+      return;
+
+    if (res.status === 200) {
+      parseToken(body);
+    } else {
+      throw new StatusError(
+        body || `${res.status} ${res.statusText}`,
+        res.status
+      );
+    }
+  } finally {
+    if (pendingLoginGeneration === session.generation) {
+      pendingLoginGeneration = undefined;
+      // Responses started during a failed login must remain stale after it ends.
+      sessionGeneration++;
+    }
   }
 }
 
 export async function renew(jwt: string) {
+  const session = captureAuthSession();
+  // On startup the stored token has not been installed in Pinia yet.
+  if (
+    !isCurrentAuthSession(session) ||
+    (jwt !== session.jwt &&
+      (session.jwt !== "" || jwt !== localStorage.getItem("jwt")))
+  )
+    return;
+
   const res = await fetch(`${baseURL}/api/renew`, {
     method: "POST",
     headers: {
@@ -84,6 +133,8 @@ export async function renew(jwt: string) {
   });
 
   const body = await res.text();
+
+  if (!isCurrentAuthSession(session)) return;
 
   if (res.status === 200) {
     parseToken(body);
@@ -116,6 +167,8 @@ export async function signup(username: string, password: string) {
 }
 
 export function logout(reason?: string) {
+  sessionGeneration++;
+  pendingLoginGeneration = undefined;
   document.cookie = "auth=; Max-Age=0; Path=/; SameSite=Strict;";
 
   const authStore = useAuthStore();
