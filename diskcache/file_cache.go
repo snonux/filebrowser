@@ -17,12 +17,9 @@ import (
 type FileCache struct {
 	fs afero.Fs
 
-	// granular locks
-	scopedLocks struct {
-		sync.Mutex
-		sync.Once
-		locks map[string]sync.Locker
-	}
+	// Fixed stripes bound synchronization memory regardless of historical keys.
+	// Hash collisions serialize unrelated mutations; reads remain lock-free.
+	scopedLocks [256]sync.Mutex
 }
 
 func New(fs afero.Fs, root string) *FileCache {
@@ -32,7 +29,7 @@ func New(fs afero.Fs, root string) *FileCache {
 }
 
 func (f *FileCache) Store(_ context.Context, key string, value []byte) error {
-	mu := f.getScopedLocks(key)
+	mu := f.getScopedLock(key)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -87,7 +84,7 @@ func (f *FileCache) Load(_ context.Context, key string) (value []byte, exist boo
 }
 
 func (f *FileCache) Delete(_ context.Context, key string) error {
-	mu := f.getScopedLocks(key)
+	mu := f.getScopedLock(key)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -111,19 +108,9 @@ func (f *FileCache) open(key string) (afero.File, bool, error) {
 	return file, true, nil
 }
 
-// getScopedLocks pull lock from the map if found or create a new one
-func (f *FileCache) getScopedLocks(key string) (lock sync.Locker) {
-	f.scopedLocks.Do(func() { f.scopedLocks.locks = map[string]sync.Locker{} })
-
-	f.scopedLocks.Lock()
-	lock, ok := f.scopedLocks.locks[key]
-	if !ok {
-		lock = &sync.Mutex{}
-		f.scopedLocks.locks[key] = lock
-	}
-	f.scopedLocks.Unlock()
-
-	return lock
+func (f *FileCache) getScopedLock(key string) *sync.Mutex {
+	hash := sha1.Sum([]byte(key))
+	return &f.scopedLocks[hash[0]]
 }
 
 func (f *FileCache) getFileName(key string) string {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ type cacheTestFaultFS struct {
 	failure string
 	entered chan struct{}
 	resume  chan struct{}
+	paused  atomic.Bool
 }
 
 type cacheTestFaultFile struct {
@@ -194,6 +196,82 @@ func TestFileCacheDeleteAndMissing(t *testing.T) {
 	}
 }
 
+func TestFileCacheLocksBoundedAcrossHistoricalKeys(t *testing.T) {
+	cache := New(afero.NewMemMapFs(), "/cache")
+	ctx := context.Background()
+	locks := make(map[*sync.Mutex]bool)
+	for i := 0; i < 4096; i++ {
+		key := fmt.Sprintf("historical-key-%d", i)
+		lock := cache.getScopedLock(key)
+		locks[lock] = true
+		require.NoError(t, cache.Store(ctx, key, []byte("thumbnail")))
+		require.NoError(t, cache.Delete(ctx, key))
+		require.NoError(t, cache.Delete(ctx, "missing-"+key))
+		locks[cache.getScopedLock("missing-"+key)] = true
+		require.Same(t, lock, cache.getScopedLock(key), "key lock must remain stable after deletion")
+	}
+	require.LessOrEqual(t, len(locks), 256, "historical keys must not retain individual locks")
+}
+
+func TestFileCacheSameKeyMutationsWaitForPublication(t *testing.T) {
+	for _, backend := range []string{"memory", "os"} {
+		for _, mutation := range []string{"store", "delete"} {
+			t.Run(backend+"/"+mutation, func(t *testing.T) {
+				fs, root := cacheTestFS(t, backend)
+				ctx := context.Background()
+				entered, resume := make(chan struct{}), make(chan struct{})
+				var release sync.Once
+				cache := New(&cacheTestFaultFS{Fs: fs, entered: entered, resume: resume}, root)
+				stored := make(chan error, 1)
+				storeFinished := make(chan struct{})
+				go func() {
+					defer close(storeFinished)
+					stored <- cache.Store(ctx, "key", []byte("first thumbnail"))
+				}()
+				defer func() {
+					release.Do(func() { close(resume) })
+					<-storeFinished
+				}()
+				select {
+				case <-entered:
+				case <-time.After(5 * time.Second):
+					t.Fatal("Store did not reach write pause")
+				}
+				started, mutated := make(chan struct{}), make(chan error, 1)
+				mutationFinished := make(chan struct{})
+				go func() {
+					defer close(mutationFinished)
+					close(started)
+					if mutation == "delete" {
+						mutated <- cache.Delete(ctx, "key")
+					} else {
+						mutated <- cache.Store(ctx, "key", []byte("second thumbnail"))
+					}
+				}()
+				defer func() {
+					release.Do(func() { close(resume) })
+					<-mutationFinished
+				}()
+				<-started
+				select {
+				case err := <-mutated:
+					t.Fatalf("same-key %s finished before publication: %v", mutation, err)
+				case <-time.After(25 * time.Millisecond):
+				}
+				release.Do(func() { close(resume) })
+				require.NoError(t, <-stored)
+				require.NoError(t, <-mutated)
+				value, exists, err := cache.Load(ctx, "key")
+				require.NoError(t, err)
+				require.Equal(t, mutation == "store", exists)
+				if exists {
+					require.Equal(t, "second thumbnail", string(value))
+				}
+			})
+		}
+	}
+}
+
 func cacheTestFS(t *testing.T, backend string) (afero.Fs, string) {
 	t.Helper()
 	if backend == "os" {
@@ -241,8 +319,12 @@ func (f *cacheTestFaultFile) Write(value []byte) (int, error) {
 	if f.fs.failure == "short-write" {
 		return n, nil
 	}
-	close(f.fs.entered)
-	<-f.fs.resume
+	// Claim the pause without blocking later writers, so the fixture itself
+	// cannot supply the same-key serialization being tested.
+	if f.fs.paused.CompareAndSwap(false, true) {
+		close(f.fs.entered)
+		<-f.fs.resume
+	}
 	m, err := f.File.Write(value[n:])
 	return n + m, err
 }
