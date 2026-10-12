@@ -1,6 +1,24 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Required for all calls to the File Browser server. -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- open_filex declares broad shared-media permissions, but this app only
+         hands app-owned downloads to other apps through its FileProvider.
+         Uploads use Android's document picker, which grants access to the
+         selected URI without storage permissions. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_IMAGES"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_VIDEO"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_AUDIO"
+        tools:node="remove" />
 
     <!-- Many self-hosted File Browser servers are reached over plain HTTP on a
          LAN or VPN, so cleartext traffic must stay allowed. -->
