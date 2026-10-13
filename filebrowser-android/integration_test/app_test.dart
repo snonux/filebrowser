@@ -744,7 +744,9 @@ void main() {
     await tapText(tester, 'kept');
     await itemAction(tester, 'note.txt', 'Available offline');
     expect(find.text('Kept with kept'), findsOneWidget);
-    await tester.tapAt(const Offset(10, 10));
+    await tester.tapAt(const Offset(10, 10)); // Closes the menu.
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
     await back(tester);
 
     // -- The server goes away -------------------------------------------------
@@ -823,7 +825,9 @@ void main() {
       expect(find.text(action), findsNothing, reason: action);
     }
     expect(find.text('Info'), findsOneWidget);
-    await tester.tapAt(const Offset(10, 10));
+    await tester.tapAt(const Offset(10, 10)); // Closes the menu.
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.pump(const Duration(milliseconds: 500));
 
     // Opening a text file is read-only.
