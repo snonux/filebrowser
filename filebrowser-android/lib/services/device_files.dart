@@ -13,6 +13,9 @@ abstract interface class DeviceFiles {
   /// Folder that downloads are saved into.
   Future<Directory> downloadDirectory();
 
+  /// Folder that copies of files marked "available offline" are kept in.
+  Future<Directory> offlineDirectory();
+
   /// Opens [file] in the app Android picks for its type. Returns an error
   /// message, or null on success.
   Future<String?> open(File file);
@@ -36,6 +39,20 @@ class PlatformDeviceFiles implements DeviceFiles {
     // under Android/data/<app>/files/Download.
     final dir = await getDownloadsDirectory() ??
         await getApplicationDocumentsDirectory();
+    await dir.create(recursive: true);
+    return dir;
+  }
+
+  @override
+  Future<Directory> offlineDirectory() async {
+    // On Android the app's folder on shared storage, next to Download, so
+    // other apps can open the copies the same way as downloads. It is removed
+    // with the app.
+    final base = Platform.isAndroid
+        ? await getExternalStorageDirectory() ??
+            await getApplicationSupportDirectory()
+        : await getApplicationSupportDirectory();
+    final dir = Directory('${base.path}/offline');
     await dir.create(recursive: true);
     return dir;
   }

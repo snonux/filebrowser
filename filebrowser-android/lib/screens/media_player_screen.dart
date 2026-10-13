@@ -7,6 +7,7 @@ import 'package:video_player/video_player.dart';
 import '../api/filebrowser_api.dart';
 import '../api/paths.dart';
 import '../models/models.dart';
+import '../providers/offline_provider.dart';
 import '../providers/session_provider.dart';
 import '../utils/format.dart';
 import '../widgets/viewer_problem.dart';
@@ -46,21 +47,25 @@ class _MediaPlayerScreenState extends ConsumerState<MediaPlayerScreen> {
 
   Future<void> _load() async {
     final api = ref.read(requireSessionProvider).api;
+    final offline = await ref.read(offlineProvider.notifier).ready;
+    final copy = offline?.localFile(widget.path);
     try {
+      if (copy != null) {
+        // Kept offline: play the copy, which also works without the server.
+        if (!mounted) return;
+        setState(() => _item = offline!.item(widget.path));
+        await _start(VideoPlayerController.file(copy));
+        return;
+      }
       // Fetching the item first also renews an expired session, so the
       // credentials handed to the player below are current.
       final item = (await api.fetch(widget.path)).item;
       if (!mounted) return;
       setState(() => _item = item);
-      final player = VideoPlayerController.networkUrl(
+      await _start(VideoPlayerController.networkUrl(
         Uri.parse(api.rawUrl(widget.path)),
         httpHeaders: api.authHeaders,
-      );
-      _player = player;
-      await player.initialize();
-      player.addListener(_onPlayerChanged);
-      await player.play();
-      if (mounted) setState(() => _ready = true);
+      ));
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } catch (_) {
@@ -70,6 +75,14 @@ class _MediaPlayerScreenState extends ConsumerState<MediaPlayerScreen> {
         setState(() => _error = 'This file cannot be played here.');
       }
     }
+  }
+
+  Future<void> _start(VideoPlayerController player) async {
+    _player = player;
+    await player.initialize();
+    player.addListener(_onPlayerChanged);
+    await player.play();
+    if (mounted) setState(() => _ready = true);
   }
 
   void _onPlayerChanged() {

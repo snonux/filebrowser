@@ -12,6 +12,7 @@ import '../models/models.dart';
 import '../navigation_key.dart';
 import '../providers/file_operations_provider.dart';
 import '../providers/files_provider.dart';
+import '../providers/offline_provider.dart';
 import '../providers/session_provider.dart';
 import '../services/file_operations.dart';
 import '../utils/format.dart';
@@ -105,8 +106,28 @@ class FileActions {
   static bool opensInApp(FileItem item) =>
       item.isImage || item.isPdf || item.isVideo || item.isAudio || item.isText;
 
+  /// The offline copy of [item], when there is one.
+  File? _offlineCopy(FileItem item) =>
+      ref.read(offlineProvider).store?.localFile(item.path);
+
+  /// Hands [item]'s offline copy to another app. Returns false when there is
+  /// no copy.
+  Future<bool> _openCopy(FileItem item) async {
+    final copy = _offlineCopy(item);
+    if (copy == null) return false;
+    try {
+      final error =
+          await ref.read(fileOperationsProvider).deviceFiles.open(copy);
+      if (error != null) showMessage('Cannot open ${item.name}: $error');
+    } catch (error) {
+      showMessage('Cannot open ${item.name}: $error');
+    }
+    return true;
+  }
+
   /// Opens a folder, image, PDF, video, audio or text file in the app;
-  /// anything else is downloaded and handed to another app.
+  /// anything else is handed to another app: its offline copy, or else a
+  /// fresh download.
   Future<void> open(BuildContext context, FileItem item) async {
     if (item.isDir) {
       context.push(AppRoutes.files(item.path));
@@ -118,7 +139,7 @@ class FileActions {
       context.push(AppRoutes.play(item.path));
     } else if (item.isText) {
       context.push(AppRoutes.edit(item.path));
-    } else {
+    } else if (!await _openCopy(item)) {
       await download(item, openWhenDone: true);
     }
   }
@@ -132,7 +153,7 @@ class FileActions {
         final item = result.value!;
         if (opensInApp(item) || item.isDir) {
           await open(context, item);
-        } else {
+        } else if (!await _openCopy(item)) {
           await _download(operation, item, openWhenDone: true);
         }
       } else {
@@ -181,9 +202,12 @@ class FileActions {
           title: 'Rename', action: 'Rename', initial: item.name);
       if (name == null || name == item.name) return;
       final dir = parentOf(item.path);
-      final result =
-          await operation.transfer(item.path, joinPath(dir, name), copy: false);
-      if (result.succeeded) _refresh(dir);
+      final target = joinPath(dir, name);
+      final result = await operation.transfer(item.path, target, copy: false);
+      if (result.succeeded) {
+        _refresh(dir);
+        await ref.read(offlineProvider.notifier).moved(item.path, target);
+      }
       _report(result);
     } finally {
       operation.close();
@@ -218,7 +242,12 @@ class FileActions {
           result = await operation.transfer(item.path, dest,
               copy: copy, override: true);
         }
-        if (result.succeeded) done++;
+        if (result.succeeded) {
+          done++;
+          if (!copy) {
+            await ref.read(offlineProvider.notifier).moved(item.path, dest);
+          }
+        }
         _report(result);
       }
       if (operation.cancelled) return;
@@ -249,6 +278,9 @@ class FileActions {
       for (final item in items) {
         final result = await operation.delete(item.path);
         if (result.status == OperationStatus.cancelled) return false;
+        if (result.succeeded) {
+          await ref.read(offlineProvider.notifier).deleted(item.path);
+        }
         _report(result, prefix: '${item.name}: ');
       }
       _refresh(parentOf(items.first.path));
@@ -347,6 +379,27 @@ class FileActions {
   Future<void> share(BuildContext context, FileItem item) => showDialog<void>(
       context: context, builder: (_) => ShareDialog(item: item));
 
+  /// Keeps [item] (a file, or a folder with everything in it) on the device
+  /// so it can be opened while the server cannot be reached.
+  Future<void> makeOffline(FileItem item) async {
+    showMessage('Making ${item.name} available offline');
+    final offline = ref.read(offlineProvider.notifier);
+    await offline.pin(item);
+    final error = ref.read(offlineProvider).error;
+    if (error != null) {
+      showMessage('${item.name} will be downloaded later: $error');
+    } else if (ref.read(offlineProvider).store?.isPinned(item.path) ?? false) {
+      showMessage('${item.name} is available offline');
+    }
+  }
+
+  /// Stops keeping [path] on the device and deletes its copies.
+  Future<void> removeOffline(String path) async {
+    await ref.read(offlineProvider.notifier).unpin(path);
+    showMessage(
+        '${path == '/' ? 'Home' : baseName(path)} is no longer available offline');
+  }
+
   Future<void> info(BuildContext context, FileItem item) => showDialog<void>(
       context: context, builder: (_) => _InfoDialog(item: item));
 
@@ -377,6 +430,8 @@ class FileActions {
   List<Widget> _menuTiles(
       BuildContext context, BuildContext sheet, FileItem item) {
     final perm = ref.read(requireSessionProvider).perm;
+    final offline = ref.read(offlineProvider).store;
+    final keptBy = offline?.pinCovering(item.path);
     Widget tile(IconData icon, String label, Future<void> Function() run) =>
         ListTile(
           leading: Icon(icon),
@@ -389,11 +444,26 @@ class FileActions {
     return [
       tile(Icons.open_in_new, 'Open', () => open(context, item)),
       if (perm.download && opensInApp(item))
-        tile(Icons.open_in_browser, 'Open with another app',
-            () => download(item, openWhenDone: true)),
+        tile(Icons.open_in_browser, 'Open with another app', () async {
+          if (!await _openCopy(item)) await download(item, openWhenDone: true);
+        }),
       if (perm.download)
         tile(Icons.download, item.isDir ? 'Download as zip' : 'Download',
             () => download(item)),
+      if (offline != null && keptBy == item.path)
+        tile(Icons.offline_pin, 'Remove offline copy',
+            () => removeOffline(item.path))
+      else if (keptBy != null)
+        ListTile(
+          enabled: false,
+          leading: const Icon(Icons.offline_pin),
+          title: const Text('Available offline'),
+          subtitle:
+              Text('Kept with ${keptBy == '/' ? 'Home' : baseName(keptBy)}'),
+        )
+      else if (offline != null && perm.download)
+        tile(Icons.offline_pin_outlined, 'Make available offline',
+            () => makeOffline(item)),
       if (perm.rename)
         tile(Icons.drive_file_rename_outline, 'Rename',
             () => rename(context, item)),

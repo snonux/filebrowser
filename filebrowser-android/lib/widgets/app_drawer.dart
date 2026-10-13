@@ -44,6 +44,11 @@ class AppDrawer extends ConsumerWidget {
             context.go(AppRoutes.files('/'));
           },
         ),
+        ListTile(
+          leading: const Icon(Icons.offline_pin_outlined),
+          title: const Text('Available offline'),
+          onTap: () => go(AppRoutes.offline),
+        ),
         if (session.perm.canShare)
           ListTile(
             leading: const Icon(Icons.link),

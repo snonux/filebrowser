@@ -7,6 +7,7 @@ import '../api/paths.dart';
 import '../app_routes.dart';
 import '../models/models.dart';
 import '../providers/files_provider.dart';
+import '../providers/offline_provider.dart';
 import '../providers/preferences_provider.dart';
 import '../providers/session_provider.dart';
 import '../utils/format.dart';
@@ -54,6 +55,9 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     final perm = session.perm;
     final itemsAsync = ref.watch(folderItemsProvider(_path));
     final items = itemsAsync.valueOrNull ?? const <FileItem>[];
+    final offlineListing =
+        ref.watch(resourceProvider(_path)).valueOrNull?.offline ?? false;
+    final offline = ref.watch(offlineProvider).store;
     final actions = FileActions(context);
     final title = _path == '/' ? 'Home' : baseName(_path);
 
@@ -171,6 +175,15 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
         body: Column(
           children: [
             _Breadcrumbs(path: _path),
+            if (offlineListing)
+              MaterialBanner(
+                leading: const Icon(Icons.cloud_off),
+                content: const Text(
+                    'The server cannot be reached. Showing the files that are available offline.'),
+                actions: [
+                  TextButton(onPressed: _refresh, child: const Text('Retry')),
+                ],
+              ),
             Expanded(
               child: RefreshIndicator(
                 onRefresh: _refresh,
@@ -197,12 +210,26 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                             return ListTile(
                               key: ValueKey(item.path),
                               selected: selected,
-                              leading: FileIcon(item: item, api: session.api),
+                              leading: FileIcon(
+                                  item: item,
+                                  api: session.api,
+                                  local: offline?.localFile(item.path)),
                               title: Text(item.name,
                                   maxLines: 1, overflow: TextOverflow.ellipsis),
-                              subtitle: Text(item.isDir
-                                  ? formatDate(item.modified)
-                                  : '${formatSize(item.size)} · ${formatDate(item.modified)}'),
+                              subtitle: Row(children: [
+                                if (offline != null &&
+                                    offline.covers(item.path))
+                                  _OfflineMark(
+                                      ready: offline.isAvailable(item.path)),
+                                Expanded(
+                                  child: Text(
+                                      item.isDir
+                                          ? formatDate(item.modified)
+                                          : '${formatSize(item.size)} · ${formatDate(item.modified)}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis),
+                                ),
+                              ]),
                               trailing: _selecting
                                   ? Checkbox(
                                       value: selected,
@@ -260,6 +287,32 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
             },
           ),
         ]),
+      ),
+    );
+  }
+}
+
+/// Shows that an entry is kept offline; [ready] is false while its copy is
+/// still to be downloaded.
+class _OfflineMark extends StatelessWidget {
+  const _OfflineMark({required this.ready});
+
+  final bool ready;
+
+  @override
+  Widget build(BuildContext context) {
+    final label =
+        ready ? 'Available offline' : 'Waiting to be available offline';
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Tooltip(
+        message: label,
+        child: Icon(
+          ready ? Icons.offline_pin : Icons.offline_pin_outlined,
+          size: 16,
+          semanticLabel: label,
+          color: Theme.of(context).colorScheme.primary,
+        ),
       ),
     );
   }

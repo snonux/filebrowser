@@ -8,6 +8,9 @@
 # every HTTP call are the same as on Android. See README.md for running the
 # same test on an Android emulator instead.
 #
+# Extra arguments go to `flutter test`, for example
+# `--plain-name 'files kept offline'` to run one test.
+#
 # Set FB_E2E_SHOTS to a directory to also save screenshots of the main
 # screens there.
 #
@@ -136,7 +139,8 @@ run=(flutter test integration_test/app_test.dart -d "$DEVICE"
   --dart-define=FB_E2E_VIEWER_PASS="$VIEWER_PASS"
   --dart-define=FB_E2E_PROXY_USER="$PROXY_USER"
   --dart-define=FB_E2E_PROXY_PASS="$PROXY_PASS"
-  --dart-define=FB_E2E_SHOTS="${FB_E2E_SHOTS:-}")
+  --dart-define=FB_E2E_SHOTS="${FB_E2E_SHOTS:-}"
+  "$@")
 echo "== ${run[*]}"
 if [ "$DEVICE" = linux ] && [ -z "${DISPLAY:-}" ]; then
   # GTK prefers Wayland and finds a desktop session by its default socket

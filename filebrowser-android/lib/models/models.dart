@@ -48,11 +48,39 @@ class FileItem {
   bool get isVideo => type == 'video';
   bool get isAudio => type == 'audio';
   bool get isHidden => name.startsWith('.');
+
+  /// The fields [FileItem.fromJson] reads, without [content]; for the
+  /// offline index.
+  Map<String, dynamic> toJson() => {
+        'path': path,
+        'name': name,
+        'size': size,
+        'modified': modified.toUtc().toIso8601String(),
+        'isDir': isDir,
+        'type': type,
+        'extension': extension,
+        'isSymlink': isSymlink,
+      };
+
+  /// The same item at another [newPath], after a rename or move.
+  FileItem movedTo(String newPath) => FileItem(
+        path: newPath,
+        name: newPath == '/'
+            ? ''
+            : newPath.substring(newPath.lastIndexOf('/') + 1),
+        size: size,
+        modified: modified,
+        isDir: isDir,
+        type: type,
+        extension: extension,
+        isSymlink: isSymlink,
+      );
 }
 
 /// A fetched resource: a directory with its entries, or a single file.
 class Resource {
-  const Resource({required this.item, this.items = const []});
+  const Resource(
+      {required this.item, this.items = const [], this.offline = false});
 
   factory Resource.fromJson(Map<String, dynamic> json) => Resource(
         item: FileItem.fromJson(json),
@@ -64,6 +92,10 @@ class Resource {
 
   final FileItem item;
   final List<FileItem> items;
+
+  /// Built from the copies kept for offline use because the server could not
+  /// be reached; it lists only what is available offline.
+  final bool offline;
 }
 
 /// The units the server accepts for a share's lifetime, as in the web UI.

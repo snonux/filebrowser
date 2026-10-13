@@ -8,6 +8,7 @@ import 'screens/browser_screen.dart';
 import 'screens/image_viewer_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/media_player_screen.dart';
+import 'screens/offline_screen.dart';
 import 'screens/pdf_viewer_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/settings_screen.dart';
@@ -74,6 +75,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.shares,
         builder: (context, state) => const SharesScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.offline,
+        builder: (context, state) => const OfflineScreen(),
       ),
       GoRoute(
         path: AppRoutes.settings,

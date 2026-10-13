@@ -10,6 +10,7 @@ abstract final class AppRoutes {
   static const searchPage = '/search';
   static const shares = '/shares';
   static const settings = '/settings';
+  static const offline = '/offline';
 
   static String _with(String route, String path) =>
       Uri(path: route, queryParameters: {'path': path}).toString();
