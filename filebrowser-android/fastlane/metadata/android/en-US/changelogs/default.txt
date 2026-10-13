@@ -1,4 +1,4 @@
-Keep the navigation drawer open when your session refreshes.
-Prevent old account sessions from interfering after switching accounts or signing out.
-Improve reliability of file operations and checksum dialogs.
-Verified browsing, editing, sharing, uploads, downloads and media playback on Android.
+Make files and folders available offline from their menu. A folder keeps everything in it, subfolders included.
+Offline copies are kept up to date and stay until you remove them or the item is deleted.
+When the server cannot be reached, kept folders can still be browsed and kept files opened.
+New "Available offline" page in the drawer lists everything kept on the device.

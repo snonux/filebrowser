@@ -8,6 +8,7 @@ File Browser is the Android client for a self-hosted File Browser server. It tal
 * Play videos and audio streamed from the server, with seeking
 * Edit text files
 * Create folders and files, rename, copy, move and delete, one item or many at once
+* Keep files or whole folders available offline, to browse and open them when the server cannot be reached
 * Search below the current folder
 * Create share links with an optional expiry and password, and manage existing links
 * Shows disk usage and respects the account's permissions

@@ -34,6 +34,18 @@ The installed app version appears at the bottom of **Settings**.
   (`Android/data/org.buetow.filebrowser/files/Download`), then open it.
 - **Create** folders and files; **rename**, **copy to**, **move to** and
   **delete**, for one item from its ⋮ menu or for several after a long press.
+- **Available offline**: **Make available offline** in the ⋮ menu of a file
+  or folder keeps a copy on the device; a folder keeps everything below it,
+  subfolders included. Kept items show a check mark. The copies are updated
+  when the app starts, when a kept folder is listed with changes, and with
+  the sync button on **Available offline** in the drawer, which lists every
+  kept item and its space on the device. They stay until **Remove offline
+  copy** is chosen or the item is deleted (in the app, or on the server, which
+  the next update notices); a rename or move in the app keeps them. When the
+  server cannot be reached, folders show what is kept, with a banner, and
+  kept files open as usual (text files read-only). Copies live in
+  `Android/data/org.buetow.filebrowser/files/offline`, one folder per server
+  and account, and are removed with the app.
 - **Search** below the current folder.
 - **Share links** with the options of the web UI: an optional lifetime in
   seconds, minutes, hours or days, and an optional password. **Share link** on
