@@ -61,10 +61,71 @@ class FakeDeviceFiles implements DeviceFiles {
       Directory('${dir.path}/downloads')..createSync(recursive: true);
 
   @override
+  Future<Directory> offlineDirectory() async =>
+      Directory('${dir.path}/offline')..createSync(recursive: true);
+
+  @override
   Future<String?> open(File file) async {
     opened.add(file);
     return null;
   }
+}
+
+/// A TCP forwarder to the server that can be shut, so the server looks
+/// unreachable to the app (connections are refused) while the test still
+/// talks to it directly.
+class TcpGate {
+  TcpGate._(this._target, ServerSocket listener)
+      : _listener = listener,
+        port = listener.port;
+
+  final Uri _target;
+  final int port;
+  ServerSocket? _listener;
+  final _sockets = <Socket>{};
+
+  String get url => 'http://127.0.0.1:$port';
+
+  static Future<TcpGate> start(Uri target) async {
+    final gate = TcpGate._(
+        target, await ServerSocket.bind(InternetAddress.loopbackIPv4, 0));
+    gate._serve();
+    return gate;
+  }
+
+  void _serve() {
+    _listener!.listen((client) async {
+      _sockets.add(client);
+      try {
+        final upstream = await Socket.connect(_target.host, _target.port);
+        _sockets.add(upstream);
+        client.listen(upstream.add,
+            onDone: upstream.destroy, onError: (_) => upstream.destroy());
+        upstream.listen(client.add,
+            onDone: client.destroy, onError: (_) => client.destroy());
+      } on SocketException {
+        client.destroy();
+      }
+    });
+  }
+
+  /// Refuses new connections and cuts the open ones.
+  Future<void> shut() async {
+    await _listener?.close();
+    _listener = null;
+    for (final s in _sockets) {
+      s.destroy();
+    }
+    _sockets.clear();
+  }
+
+  /// Accepts connections again, on the same port.
+  Future<void> open() async {
+    _listener = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
+    _serve();
+  }
+
+  Future<void> close() => shut();
 }
 
 late SharedPreferences prefs;
@@ -657,6 +718,92 @@ void main() {
     await store.writeToken('${token.substring(0, token.length - 4)}AAAA');
     await launch(tester);
     await waitFor(tester, find.text('Sign in'));
+  });
+
+  testWidgets('files kept offline open without the server', (tester) async {
+    // The app reaches the server through this forwarder, which the test
+    // closes to make the server unreachable.
+    final gate = await TcpGate.start(Uri.parse(serverUrl));
+    addTearDown(gate.close);
+    await admin.createFolder('/kept/sub/');
+    addTearDown(() => admin.delete('/kept').catchError((Object _) {}));
+    await admin.createFile('/kept/note.txt',
+        content: utf8.encode('kept for the plane'));
+    await admin.copy('/photos/red.png', '/kept/sub/pic.png');
+    await admin.copy('/projects/app/data.bin', '/kept/sub/data.bin');
+
+    await launch(tester);
+    await login(tester, url: gate.url, user: adminUser, password: adminPass);
+    await waitFor(tester, find.text('kept'));
+    await itemAction(tester, 'kept', 'Make available offline');
+    await waitFor(tester, find.text('kept is available offline'));
+    await itemAction(tester, 'readme.md', 'Make available offline');
+    await waitFor(tester, find.text('readme.md is available offline'));
+    expect(find.byTooltip('Available offline'), findsNWidgets(2));
+    // Inside a kept folder the menu says what keeps an item offline.
+    await tapText(tester, 'kept');
+    await itemAction(tester, 'note.txt', 'Available offline');
+    expect(find.text('Kept with kept'), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await back(tester);
+
+    // -- The server goes away -------------------------------------------------
+    await gate.shut();
+    await tap(tester, find.byTooltip('More'));
+    await tapText(tester, 'Refresh');
+    await waitFor(tester, find.textContaining('The server cannot be reached'));
+    await screenshot(tester, '9-offline');
+    expect(find.text('kept'), findsOneWidget);
+    expect(find.text('readme.md'), findsOneWidget);
+    expect(find.text('photos'), findsNothing);
+
+    await tapText(tester, 'kept');
+    await waitFor(tester, find.text('note.txt'));
+    await tapText(tester, 'note.txt');
+    await waitFor(tester, find.text('kept for the plane'));
+    expect(find.textContaining('This is the offline copy'), findsOneWidget);
+    await back(tester);
+
+    await tapText(tester, 'sub');
+    await waitFor(tester, find.text('data.bin'));
+    await waitForImages(tester, 1); // The thumbnail, from the copy.
+    await tapText(tester, 'data.bin');
+    await waitUntil(tester, () async => device.opened.isNotEmpty,
+        'the copy handed to another app');
+    expect(sha256Of(device.opened.last.readAsBytesSync()),
+        await admin.checksum('/kept/sub/data.bin', 'sha256'));
+    await tapText(tester, 'pic.png');
+    await waitFor(tester, find.text('1 / 1'));
+    await waitForImages(tester, 1);
+    await back(tester);
+
+    // The list of everything kept, also without the server.
+    await tapText(tester, 'Home');
+    await tap(tester, find.byTooltip('Open navigation menu'));
+    await tapText(tester, 'Available offline');
+    await waitFor(tester, find.textContaining('4 files'));
+    await tap(tester, find.byTooltip('Remove offline copy of readme.md'));
+    await waitFor(tester, find.textContaining('3 files'));
+    expect(find.text('readme.md'), findsNothing);
+    await back(tester);
+
+    // -- Back online: deleting a kept folder drops its copies ----------------
+    await gate.open();
+    await tap(tester, find.byTooltip('More'));
+    await tapText(tester, 'Refresh');
+    await waitFor(tester, find.text('photos'));
+    expect(find.textContaining('The server cannot be reached'), findsNothing);
+    await itemAction(tester, 'kept', 'Delete');
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await waitUntil(tester, () async => !await exists('/kept'), 'kept deleted');
+    await tap(tester, find.byTooltip('Open navigation menu'));
+    await tapText(tester, 'Available offline');
+    await waitFor(tester, find.textContaining('Nothing is available offline'));
+    final left = Directory('${device.dir.path}/offline')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((f) => !f.path.endsWith('index.json'));
+    expect(left, isEmpty);
   });
 
   testWidgets('read-only account sees no write actions', (tester) async {

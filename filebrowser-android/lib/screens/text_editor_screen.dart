@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/filebrowser_api.dart';
 import '../api/paths.dart';
 import '../providers/files_provider.dart';
+import '../providers/offline_provider.dart';
 import '../providers/session_provider.dart';
 import 'file_actions.dart';
 
@@ -23,6 +26,7 @@ class _TextEditorScreenState extends ConsumerState<TextEditorScreen> {
   bool _loading = true;
   bool _saving = false;
   bool _editable = false;
+  bool _offline = false;
   String? _error;
 
   bool get _dirty => _text.text != _saved;
@@ -48,7 +52,23 @@ class _TextEditorScreenState extends ConsumerState<TextEditorScreen> {
       _text.text = _saved;
       _editable = session.perm.modify && item.type == 'text';
     } on ApiException catch (e) {
+      // Without the server, show the offline copy if there is one. It
+      // cannot be saved, so it is read-only.
+      final copy = e.statusCode == null
+          ? (await ref.read(offlineProvider.notifier).ready)
+              ?.localFile(widget.path)
+          : null;
       _error = e.message;
+      if (copy != null) {
+        try {
+          _saved = await copy.readAsString();
+          _text.text = _saved;
+          _offline = true;
+          _error = null;
+        } on FileSystemException {
+          // Removed meanwhile, or not text: report the server error.
+        }
+      }
     }
     if (mounted) setState(() => _loading = false);
   }
@@ -122,21 +142,31 @@ class _TextEditorScreenState extends ConsumerState<TextEditorScreen> {
             ? const Center(child: CircularProgressIndicator())
             : _error != null
                 ? Center(child: Text(_error!))
-                : Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: TextField(
-                      controller: _text,
-                      readOnly: !_editable,
-                      maxLines: null,
-                      expands: true,
-                      textAlignVertical: TextAlignVertical.top,
-                      style: const TextStyle(fontFamily: 'monospace'),
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        hintText: _editable ? 'Empty file' : null,
+                : Column(children: [
+                    if (_offline)
+                      const MaterialBanner(
+                        leading: Icon(Icons.cloud_off),
+                        content: Text(
+                            'The server cannot be reached. This is the offline copy; it cannot be edited.'),
+                        actions: [SizedBox.shrink()],
                       ),
-                    ),
-                  ),
+                    Expanded(
+                        child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: TextField(
+                        controller: _text,
+                        readOnly: !_editable,
+                        maxLines: null,
+                        expands: true,
+                        textAlignVertical: TextAlignVertical.top,
+                        style: const TextStyle(fontFamily: 'monospace'),
+                        decoration: InputDecoration(
+                          border: const OutlineInputBorder(),
+                          hintText: _editable ? 'Empty file' : null,
+                        ),
+                      ),
+                    )),
+                  ]),
       ),
     );
   }

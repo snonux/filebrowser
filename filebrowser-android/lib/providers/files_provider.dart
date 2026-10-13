@@ -1,14 +1,27 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/filebrowser_api.dart';
 import '../models/models.dart';
+import 'offline_provider.dart';
 import 'preferences_provider.dart';
 import 'session_provider.dart';
 
-/// The raw listing of one folder (or one file) from the server.
+/// The raw listing of one folder (or one file) from the server. When the
+/// server cannot be reached, the listing of what is kept offline, if any.
 final resourceProvider =
-    FutureProvider.autoDispose.family<Resource, String>((ref, path) {
+    FutureProvider.autoDispose.family<Resource, String>((ref, path) async {
   final api = ref.watch(requireSessionProvider.select((s) => s.api));
-  return api.fetch(path);
+  final offline = ref.read(offlineProvider.notifier);
+  try {
+    final resource = await api.fetch(path);
+    offline.listed(path, resource);
+    return resource;
+  } on ApiException catch (e) {
+    if (e.statusCode != null) rethrow;
+    final listing = (await offline.ready)?.listing(path);
+    if (listing == null) rethrow;
+    return listing;
+  }
 });
 
 /// Whether dotfiles are shown: the user's own toggle, else the account's

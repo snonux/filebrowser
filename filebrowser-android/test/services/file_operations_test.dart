@@ -39,6 +39,9 @@ class TestDeviceFiles implements DeviceFiles {
   Future<List<File>> pickFiles() async =>
       picked == null ? [] : await picked!.future;
   @override
+  Future<Directory> offlineDirectory() async =>
+      Directory('${dir.path}/offline');
+  @override
   Future<String?> open(File file) async => null;
 }
 

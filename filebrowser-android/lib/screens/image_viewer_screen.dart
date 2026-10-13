@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/paths.dart';
 import '../models/models.dart';
 import '../providers/files_provider.dart';
+import '../providers/offline_provider.dart';
 import '../providers/session_provider.dart';
 import 'file_actions.dart';
 
@@ -64,6 +65,9 @@ class _ImageViewerScreenState extends ConsumerState<ImageViewerScreen> {
     }
     final current = images[_index.clamp(0, images.length - 1)];
     final api = session.api;
+    final offline = ref.watch(offlineProvider).store;
+    Widget failed(_, __, ___) =>
+        const Text('Image unavailable', style: TextStyle(color: Colors.white));
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -103,17 +107,20 @@ class _ImageViewerScreenState extends ConsumerState<ImageViewerScreen> {
           panEnabled: _zoomed,
           maxScale: 6,
           child: Center(
-            child: Image.network(
-              api.previewUrl(images[i].path, 'big',
-                  modified: images[i].modified),
-              headers: api.authHeaders,
-              fit: BoxFit.contain,
-              loadingBuilder: (_, child, progress) => progress == null
-                  ? child
-                  : const Center(child: CircularProgressIndicator()),
-              errorBuilder: (_, __, ___) => const Text('Image unavailable',
-                  style: TextStyle(color: Colors.white)),
-            ),
+            child: switch (offline?.localFile(images[i].path)) {
+              final copy? =>
+                Image.file(copy, fit: BoxFit.contain, errorBuilder: failed),
+              null => Image.network(
+                  api.previewUrl(images[i].path, 'big',
+                      modified: images[i].modified),
+                  headers: api.authHeaders,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (_, child, progress) => progress == null
+                      ? child
+                      : const Center(child: CircularProgressIndicator()),
+                  errorBuilder: failed,
+                ),
+            },
           ),
         ),
       ),

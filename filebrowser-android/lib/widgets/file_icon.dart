@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../api/filebrowser_api.dart';
@@ -5,10 +7,14 @@ import '../models/models.dart';
 
 /// A thumbnail for images, otherwise an icon for the file's type.
 class FileIcon extends StatelessWidget {
-  const FileIcon({super.key, required this.item, required this.api});
+  const FileIcon(
+      {super.key, required this.item, required this.api, this.local});
 
   final FileItem item;
   final FileBrowserApi api;
+
+  /// The offline copy, used instead of the server's thumbnail.
+  final File? local;
 
   static IconData iconFor(FileItem item) {
     if (item.isDir) return Icons.folder;
@@ -27,18 +33,27 @@ class FileIcon extends StatelessWidget {
     final color = item.isDir ? Theme.of(context).colorScheme.primary : null;
     final icon = Icon(iconFor(item), color: color, size: 32);
     if (!item.isImage) return SizedBox.square(dimension: 40, child: icon);
+    Widget fallback(_, __, ___) => SizedBox.square(dimension: 40, child: icon);
+    final local = this.local;
     return ClipRRect(
       borderRadius: BorderRadius.circular(4),
-      child: Image.network(
-        api.previewUrl(item.path, 'thumb', modified: item.modified),
-        headers: api.authHeaders,
-        width: 40,
-        height: 40,
-        fit: BoxFit.cover,
-        // SVGs and broken images have no raster thumbnail; show the icon.
-        errorBuilder: (_, __, ___) =>
-            SizedBox.square(dimension: 40, child: icon),
-      ),
+      child: local != null
+          ? Image.file(local,
+              width: 40,
+              height: 40,
+              fit: BoxFit.cover,
+              cacheWidth: 120,
+              errorBuilder: fallback)
+          : Image.network(
+              api.previewUrl(item.path, 'thumb', modified: item.modified),
+              headers: api.authHeaders,
+              width: 40,
+              height: 40,
+              fit: BoxFit.cover,
+              // SVGs and broken images have no raster thumbnail; show the
+              // icon.
+              errorBuilder: fallback,
+            ),
     );
   }
 }

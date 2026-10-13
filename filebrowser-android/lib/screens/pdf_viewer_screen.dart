@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -8,6 +9,7 @@ import 'package:pdfrx/pdfrx.dart';
 import '../api/filebrowser_api.dart';
 import '../api/paths.dart';
 import '../models/models.dart';
+import '../providers/offline_provider.dart';
 import '../providers/session_provider.dart';
 import '../utils/format.dart';
 import '../widgets/viewer_problem.dart';
@@ -50,6 +52,23 @@ class _PdfViewerScreenState extends ConsumerState<PdfViewerScreen> {
 
   Future<void> _load() async {
     final api = ref.read(requireSessionProvider).api;
+    final offline = await ref.read(offlineProvider.notifier).ready;
+    final copy = offline?.localFile(widget.path);
+    if (copy != null) {
+      // Kept offline: no need to ask the server.
+      try {
+        final bytes = await copy.readAsBytes();
+        if (mounted) {
+          setState(() {
+            _item = offline!.item(widget.path);
+            _bytes = bytes;
+          });
+        }
+        return;
+      } on FileSystemException {
+        // Removed meanwhile; fetch it from the server instead.
+      }
+    }
     try {
       final item = (await api.fetch(widget.path)).item;
       if (mounted) setState(() => _item = item);
