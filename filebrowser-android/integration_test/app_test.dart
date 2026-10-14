@@ -3,6 +3,7 @@
 // Run it with test/e2e/run_e2e.sh, which builds and seeds the server, starts
 // a basic-auth proxy in front of it and passes the addresses below. It drives
 // the real UI and checks every result on the server through the API.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -15,8 +16,10 @@ import 'package:filebrowser_android/models/models.dart';
 import 'package:filebrowser_android/providers/device_files_provider.dart';
 import 'package:filebrowser_android/providers/preferences_provider.dart';
 import 'package:filebrowser_android/providers/session_provider.dart';
+import 'package:filebrowser_android/providers/share_provider.dart';
 import 'package:filebrowser_android/services/credential_store.dart';
 import 'package:filebrowser_android/services/device_files.dart';
+import 'package:filebrowser_android/services/share_receiver.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -69,6 +72,24 @@ class FakeDeviceFiles implements DeviceFiles {
     opened.add(file);
     return null;
   }
+}
+
+/// Stands in for Android's "Share" menu. Shares made before the app listens
+/// wait for it, as a share that launches the app does.
+class FakeShareReceiver implements ShareReceiver {
+  final _queued = <SharedContent>[];
+  final _controller = StreamController<SharedContent>.broadcast();
+
+  @override
+  Stream<SharedContent> get shares async* {
+    while (_queued.isNotEmpty) {
+      yield _queued.removeAt(0);
+    }
+    yield* _controller.stream;
+  }
+
+  void share(SharedContent content) =>
+      _controller.hasListener ? _controller.add(content) : _queued.add(content);
 }
 
 /// A TCP forwarder to the server that can be shut, so the server looks
@@ -131,6 +152,7 @@ class TcpGate {
 late SharedPreferences prefs;
 late MemoryCredentialStore store;
 late FakeDeviceFiles device;
+late FakeShareReceiver shares;
 late FileBrowserApi admin;
 
 Future<void> launch(WidgetTester tester) async {
@@ -144,6 +166,7 @@ Future<void> launch(WidgetTester tester) async {
       sharedPreferencesProvider.overrideWithValue(prefs),
       credentialStoreProvider.overrideWithValue(store),
       deviceFilesProvider.overrideWithValue(device),
+      shareReceiverProvider.overrideWithValue(shares),
     ],
     child: RepaintBoundary(key: _shotKey, child: const FileBrowserApp()),
   ));
@@ -304,6 +327,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     prefs = await SharedPreferences.getInstance();
     store = MemoryCredentialStore();
+    shares = FakeShareReceiver();
   });
 
   testWidgets('login, browse and every file operation', (tester) async {
@@ -806,6 +830,61 @@ void main() {
         .whereType<File>()
         .where((f) => !f.path.endsWith('index.json'));
     expect(left, isEmpty);
+  });
+
+  testWidgets('files and text shared from other apps are uploaded',
+      (tester) async {
+    addTearDown(() async {
+      for (final name in ['Trip plan.md', 'shared-a.txt', 'shared-b.bin']) {
+        await admin.delete('/projects/$name').catchError((Object _) {});
+      }
+    });
+
+    // -- Text shared while the app was closed, uploaded after sign-in -------
+    const trip = '# Trip plan\n\n- [ ] book the train\n';
+    shares.share(const SharedContent(text: trip));
+    await launch(tester);
+    await login(tester, url: serverUrl, user: adminUser, password: adminPass);
+    await waitFor(tester, find.text('Upload to File Browser'));
+    final name = find.widgetWithText(TextField, 'File name');
+    expect(tester.widget<TextField>(name).controller!.text, 'Trip plan.md');
+    await tapText(tester, 'Plain text');
+    expect(tester.widget<TextField>(name).controller!.text, 'Trip plan.txt');
+    await tapText(tester, 'Markdown');
+    expect(tester.widget<TextField>(name).controller!.text, 'Trip plan.md');
+    await screenshot(tester, '10-share-text');
+    await tapText(tester, 'Upload to folder');
+    await tapText(tester, 'projects');
+    await tap(tester, find.widgetWithText(FilledButton, 'Upload here'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Upload'));
+    await waitFor(tester, find.text('Trip plan.md'));
+    expect((await admin.fetch('/projects/Trip plan.md')).item.content, trip);
+
+    // -- Files shared while the app is open; the folder is remembered -------
+    final dir = Directory('${device.dir.path}/shared')
+      ..createSync(recursive: true);
+    final a = File('${dir.path}/shared-a.txt')..writeAsStringSync('first');
+    final bytes = List<int>.generate(70000, (i) => i * 7 % 256);
+    final b = File('${dir.path}/shared-b.bin')..writeAsBytesSync(bytes);
+    shares.share(SharedContent(files: [a, b], dir: dir));
+    await waitFor(tester, find.text('shared-b.bin'));
+    expect(find.text('/projects'), findsOneWidget);
+    await tap(tester, find.widgetWithText(FilledButton, 'Upload'));
+    await waitFor(tester, find.text('Uploaded 2 files'));
+    await waitFor(tester, find.text('shared-a.txt'));
+    expect((await admin.fetch('/projects/shared-a.txt')).item.content, 'first');
+    expect(await admin.checksum('/projects/shared-b.bin', 'sha256'),
+        sha256Of(bytes));
+    expect(dir.existsSync(), isFalse, reason: 'copies removed after upload');
+
+    // -- Plain text named after its subject; cancelling uploads nothing -----
+    shares.share(const SharedContent(
+        text: 'Call the plumber on Monday.', subject: 'Note: house'));
+    await waitFor(tester, find.text('Upload to File Browser'));
+    expect(tester.widget<TextField>(name).controller!.text, 'Note house.txt');
+    await tap(tester, find.byTooltip('Cancel'));
+    await waitFor(tester, find.text('readme.md'));
+    expect(await exists('/projects/Note house.txt'), isFalse);
   });
 
   testWidgets('read-only account sees no write actions', (tester) async {

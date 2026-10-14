@@ -308,16 +308,17 @@ class FileActions {
     }
   }
 
-  Future<void> uploadFile(BuildContext context, File file, String dir) async {
+  /// Uploads [file] into [dir]; returns whether it arrived.
+  Future<bool> uploadFile(BuildContext context, File file, String dir) async {
     final operation = _begin();
     try {
-      await _uploadFile(context, operation, file, dir);
+      return await _uploadFile(context, operation, file, dir);
     } finally {
       operation.close();
     }
   }
 
-  Future<void> _uploadFile(BuildContext context, FileOperation operation,
+  Future<bool> _uploadFile(BuildContext context, FileOperation operation,
       File file, String dir) async {
     final result = await operation.upload(file, dir, replace: (name) async {
       if (!context.mounted) return false;
@@ -328,6 +329,7 @@ class FileActions {
     });
     if (!operation.cancelled) _refresh(dir);
     _report(result, prefix: 'Upload of ${file.uri.pathSegments.last} failed: ');
+    return result.succeeded;
   }
 
   /// Saves a file (or a folder as a zip) into the device's download folder.
