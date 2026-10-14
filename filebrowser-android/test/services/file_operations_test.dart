@@ -43,6 +43,12 @@ class TestDeviceFiles implements DeviceFiles {
       Directory('${dir.path}/offline');
   @override
   Future<String?> open(File file) async => null;
+  @override
+  Future<Directory> editDirectory() async => Directory('${dir.path}/edit');
+  @override
+  Future<String?> editorName() async => null;
+  @override
+  Future<String?> edit(File file) async => null;
 }
 
 FileItem item(String path) => FileItem(

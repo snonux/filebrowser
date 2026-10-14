@@ -16,6 +16,12 @@ flutter_secure_storage.
   user-facing feature has a step there.
 - Platform access (file picker, download folder, opening files) goes through
   `lib/services/device_files.dart` so tests can replace it.
+- "Edit in TurboNotes": `lib/services/external_edits.dart` downloads the
+  file into the cache, `MainActivity.kt` lends it to TurboNotes
+  (`org.buetow.turbonotes`) with `ACTION_EDIT` through `EditProvider.kt`
+  (read/write grant), and every change TurboNotes writes is uploaded with
+  `PUT /api/resources`. TurboNotes' side is in snonux/turbonotes
+  (`ExternalDocuments.kt`); keep the `text/*` `ACTION_EDIT` contract.
 - Do not commit the generated `linux/` runner, `android/key.properties`, key
   stores, or build output.
 - Releases use `android-vX.Y.Z` tags; `vX.Y.Z` tags belong to the server. To

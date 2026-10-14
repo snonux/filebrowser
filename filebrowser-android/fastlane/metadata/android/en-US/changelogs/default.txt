@@ -1,4 +1,3 @@
-Make files and folders available offline from their menu. A folder keeps everything in it, subfolders included.
-Offline copies are kept up to date and stay until you remove them or the item is deleted.
-When the server cannot be reached, kept folders can still be browsed and kept files opened.
-New "Available offline" page in the drawer lists everything kept on the device.
+Share files and text from other apps to File Browser and upload them into a folder you pick.
+New "Edit in TurboNotes" in the menu of text and Markdown files: every save in TurboNotes is uploaded back to the server.
+If the file changed on the server meanwhile, your edits are kept as a copy next to it instead of overwriting.

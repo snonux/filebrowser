@@ -27,6 +27,14 @@ The installed app version appears at the bottom of **Settings**.
   picks for it. **Open with another app** in a file's ⋮ menu does the same
   for files the app can show itself, and the PDF viewer and player offer it
   when they cannot show a file.
+- **Edit in TurboNotes**: the ⋮ menu of a text or Markdown file (and the
+  text editor's toolbar) hands it to
+  [TurboNotes](https://github.com/snonux/turbonotes), and every save there is
+  uploaded back to the server within a few seconds. If someone changed the
+  file on the server meanwhile, the edits are saved next to it as
+  `name (edited <date> <time>).ext` instead of overwriting theirs. Without
+  TurboNotes the action reads **Edit in another app** and Android asks which
+  editor to use. Needs the modify and download permissions.
 - **Upload** any number of files picked with Android's file picker. Uploads
   use the tus protocol in 10 MB chunks and resume from the server's offset
   after a failed chunk. Uploading over an existing name asks before replacing.

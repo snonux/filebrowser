@@ -72,6 +72,22 @@ class FakeDeviceFiles implements DeviceFiles {
     opened.add(file);
     return null;
   }
+
+  /// Files handed to the editor app (TurboNotes), which the test then edits.
+  final edited = <File>[];
+
+  @override
+  Future<Directory> editDirectory() async =>
+      Directory('${dir.path}/edit')..createSync(recursive: true);
+
+  @override
+  Future<String?> editorName() async => 'TurboNotes';
+
+  @override
+  Future<String?> edit(File file) async {
+    edited.add(file);
+    return null;
+  }
 }
 
 /// Stands in for Android's "Share" menu. Shares made before the app listens
@@ -402,6 +418,33 @@ void main() {
         'hello from android');
     await back(tester);
     await waitFor(tester, find.text('notes.txt'));
+
+    // -- Edit in TurboNotes ---------------------------------------------------
+    await itemAction(tester, 'notes.txt', 'Edit in TurboNotes');
+    await waitUntil(
+        tester, () async => device.edited.isNotEmpty, 'file handed over');
+    final lent = device.edited.single;
+    expect(await lent.readAsString(), 'hello from android');
+    Future<String?> notes() async =>
+        (await admin.fetch('/Docs/notes.txt')).item.content;
+    // TurboNotes saves into the lent copy; File Browser uploads it.
+    await lent.writeAsString('edited in turbonotes', flush: true);
+    await waitUntil(tester, () async => await notes() == 'edited in turbonotes',
+        'edit uploaded');
+    await waitFor(tester, find.text('Saved notes.txt'));
+    // Changed on the server meanwhile: the next save goes to a copy.
+    await admin.saveText('/Docs/notes.txt', 'changed on the server');
+    await lent.writeAsString('edited again', flush: true);
+    await waitFor(
+        tester, find.textContaining('changed on the server meanwhile'));
+    expect(await notes(), 'changed on the server');
+    final copy = (await admin.fetch('/Docs'))
+        .items
+        .singleWhere((i) => i.name.startsWith('notes (edited '));
+    expect((await admin.fetch(copy.path)).item.content, 'edited again');
+    await admin.delete(copy.path);
+    await admin.saveText('/Docs/notes.txt', 'hello from android');
+    device.edited.clear();
 
     // -- Uploads (tus) --------------------------------------------------------
     final rng = Random(42);
@@ -899,6 +942,7 @@ void main() {
       'Copy to…',
       'Move to…',
       'Share link',
+      'Edit in TurboNotes',
       'Delete'
     ]) {
       expect(find.text(action), findsNothing, reason: action);

@@ -211,8 +211,11 @@ class FileBrowserApi {
       });
 
   /// Replaces the text of an existing file.
-  Future<void> saveText(String path, String text) => _call(() async {
-        final bytes = utf8.encode(text);
+  Future<void> saveText(String path, String text) =>
+      saveBytes(path, utf8.encode(text));
+
+  /// Replaces the content of an existing file.
+  Future<void> saveBytes(String path, List<int> bytes) => _call(() async {
         await _dio.put<void>(
           _api('resources', path),
           data: bytes,

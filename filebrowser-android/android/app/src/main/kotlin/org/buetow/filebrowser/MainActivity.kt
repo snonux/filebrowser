@@ -1,6 +1,9 @@
 package org.buetow.filebrowser
 
+import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -20,6 +23,9 @@ import java.io.File
  * grant is still valid, so the upload can take as long as it needs. The
  * Flutter side asks for the share with `take`; `received` tells it that one
  * is waiting.
+ *
+ * It also lends text files to TurboNotes for "Edit in TurboNotes" (the
+ * `org.buetow.filebrowser/edit` channel, files served by [EditProvider]).
  */
 class MainActivity : FlutterActivity() {
     private var channel: MethodChannel? = null
@@ -51,6 +57,60 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, EDIT_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "editorName" -> result.success(if (hasTurboNotes()) "TurboNotes" else null)
+                    "edit" -> {
+                        val path = call.argument<String>("path")
+                        if (path == null) {
+                            result.error("bad_args", "path is required.", null)
+                        } else {
+                            result.success(edit(File(path)))
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun editIntent(file: File): Intent {
+        val uri = EditProvider.uriFor(this, file)
+        return Intent(Intent.ACTION_EDIT).apply {
+            setDataAndType(uri, textMimeType(file.name))
+            clipData = ClipData.newRawUri(file.name, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+    }
+
+    private fun hasTurboNotes(): Boolean = try {
+        packageManager.getPackageInfo(TURBONOTES, 0)
+        true
+    } catch (e: PackageManager.NameNotFoundException) {
+        false
+    }
+
+    /** Hands [file] to TurboNotes, or else to an editor the user picks.
+     *  Returns an error message, or null. */
+    private fun edit(file: File): String? = try {
+        val intent = editIntent(file)
+        if (hasTurboNotes()) {
+            intent.setPackage(TURBONOTES)
+            try {
+                startActivity(intent)
+            } catch (e: ActivityNotFoundException) {
+                // An old TurboNotes that cannot edit other apps' files yet.
+                intent.setPackage(null)
+                startActivity(Intent.createChooser(intent, null))
+            }
+        } else {
+            startActivity(Intent.createChooser(intent, null))
+        }
+        null
+    } catch (e: ActivityNotFoundException) {
+        "No app can edit text files. Install TurboNotes from F-Droid."
+    } catch (e: IllegalArgumentException) {
+        e.message ?: e.toString()
     }
 
     private fun receive(intent: Intent?) {
@@ -150,5 +210,9 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "org.buetow.filebrowser/share"
+        private const val EDIT_CHANNEL = "org.buetow.filebrowser/edit"
+
+        /** Text files open in TurboNotes when it is installed. */
+        private const val TURBONOTES = "org.buetow.turbonotes"
     }
 }
