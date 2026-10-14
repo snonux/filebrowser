@@ -30,6 +30,13 @@ The installed app version appears at the bottom of **Settings**.
 - **Upload** any number of files picked with Android's file picker. Uploads
   use the tus protocol in 10 MB chunks and resume from the server's offset
   after a failed chunk. Uploading over an existing name asks before replacing.
+- **Share to File Browser** from any app: files of any type, one or many,
+  and text. The app asks for the folder (the last one used is remembered),
+  then uploads. Shared text becomes a file named after the sender's subject
+  or the text's first line; it is saved as `.md` when it looks like Markdown
+  (a heading, link, code block, table, bold text, a task list, or two weaker
+  signs such as a list and a quote) and as `.txt` otherwise, with a switch to
+  change it. Signing in first is asked for when needed.
 - **Download** a file, or a folder as a zip, into the app's Download folder
   (`Android/data/org.buetow.filebrowser/files/Download`), then open it.
 - **Create** folders and files; **rename**, **copy to**, **move to** and

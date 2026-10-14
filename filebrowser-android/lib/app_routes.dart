@@ -11,6 +11,7 @@ abstract final class AppRoutes {
   static const shares = '/shares';
   static const settings = '/settings';
   static const offline = '/offline';
+  static const shareUpload = '/share-upload';
 
   static String _with(String route, String path) =>
       Uri(path: route, queryParameters: {'path': path}).toString();

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'app_routes.dart';
 import 'providers/session_provider.dart';
+import 'providers/share_provider.dart';
 import 'screens/browser_screen.dart';
 import 'screens/image_viewer_screen.dart';
 import 'screens/login_screen.dart';
@@ -12,15 +13,18 @@ import 'screens/offline_screen.dart';
 import 'screens/pdf_viewer_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/share_upload_screen.dart';
 import 'screens/shares_screen.dart';
 import 'screens/text_editor_screen.dart';
 
 export 'app_routes.dart' show AppRoutes;
 
-/// Re-runs the router's redirect whenever the session changes.
+/// Re-runs the router's redirect whenever the session or the waiting share
+/// changes.
 class _SessionListenable extends ChangeNotifier {
   _SessionListenable(Ref ref) {
     ref.listen(sessionProvider, (_, __) => notifyListeners());
+    ref.listen(pendingShareProvider, (_, __) => notifyListeners());
   }
 }
 
@@ -40,6 +44,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       final signedIn = session.valueOrNull != null;
       final atLogin = state.matchedLocation == AppRoutes.login;
       if (!signedIn) return atLogin ? null : AppRoutes.login;
+      // A share from another app waits for the user's upload or cancel.
+      final sharing = ref.read(pendingShareProvider) != null;
+      final atShare = state.matchedLocation == AppRoutes.shareUpload;
+      if (sharing && !atShare) return AppRoutes.shareUpload;
       if (atLogin) return AppRoutes.files('/');
       return null;
     },
@@ -79,6 +87,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.offline,
         builder: (context, state) => const OfflineScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.shareUpload,
+        builder: (context, state) => const ShareUploadScreen(),
       ),
       GoRoute(
         path: AppRoutes.settings,

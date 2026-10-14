@@ -18,6 +18,7 @@ class Preferences {
     this.sortField = SortField.name,
     this.sortAscending = true,
     this.showHidden,
+    this.shareFolder = '/',
   });
 
   final String serverUrl;
@@ -32,6 +33,9 @@ class Preferences {
   /// Null until the user changes it; then the account's own setting no longer
   /// applies.
   final bool? showHidden;
+
+  /// Folder that shares from other apps were last uploaded to.
+  final String shareFolder;
 }
 
 class PreferencesNotifier extends Notifier<Preferences> {
@@ -50,6 +54,7 @@ class PreferencesNotifier extends Notifier<Preferences> {
           SortField.values.byName(_prefs.getString('sortField') ?? 'name'),
       sortAscending: _prefs.getBool('sortAscending') ?? true,
       showHidden: _prefs.getBool('showHidden'),
+      shareFolder: _prefs.getString('shareFolder') ?? '/',
     );
   }
 
@@ -76,6 +81,11 @@ class PreferencesNotifier extends Notifier<Preferences> {
 
   Future<void> setShowHidden(bool show) async {
     await _prefs.setBool('showHidden', show);
+    ref.invalidateSelf();
+  }
+
+  Future<void> setShareFolder(String folder) async {
+    await _prefs.setString('shareFolder', folder);
     ref.invalidateSelf();
   }
 }
