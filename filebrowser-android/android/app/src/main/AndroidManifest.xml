@@ -61,6 +61,12 @@
                 <data android:mimeType="*/*"/>
             </intent-filter>
         </activity>
+        <!-- Lends text files to TurboNotes for "Edit in TurboNotes". -->
+        <provider
+            android:name=".EditProvider"
+            android:authorities="org.buetow.filebrowser.edit"
+            android:exported="false"
+            android:grantUriPermissions="true" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
@@ -73,6 +79,12 @@
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
+        <!-- "Edit in TurboNotes" checks whether TurboNotes is installed. -->
+        <package android:name="org.buetow.turbonotes" />
+        <intent>
+            <action android:name="android.intent.action.EDIT" />
+            <data android:mimeType="text/*" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

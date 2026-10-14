@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/filebrowser_api.dart';
 import '../api/paths.dart';
+import '../models/models.dart';
 import '../providers/files_provider.dart';
 import '../providers/offline_provider.dart';
 import '../providers/session_provider.dart';
@@ -29,6 +30,10 @@ class _TextEditorScreenState extends ConsumerState<TextEditorScreen> {
   bool _offline = false;
   String? _error;
 
+  /// "Edit in TurboNotes" when the file can be edited in another app.
+  String? _editLabel;
+  FileItem? _item;
+
   bool get _dirty => _text.text != _saved;
 
   @override
@@ -51,6 +56,13 @@ class _TextEditorScreenState extends ConsumerState<TextEditorScreen> {
       _saved = item.content ?? '';
       _text.text = _saved;
       _editable = session.perm.modify && item.type == 'text';
+      if (mounted) {
+        final actions = FileActions(context);
+        if (actions.canEditExternally(item)) {
+          _item = item;
+          _editLabel = await actions.editLabel();
+        }
+      }
     } on ApiException catch (e) {
       // Without the server, show the offline copy if there is one. It
       // cannot be saved, so it is read-only.
@@ -126,6 +138,18 @@ class _TextEditorScreenState extends ConsumerState<TextEditorScreen> {
         appBar: AppBar(
           title: Text(baseName(widget.path)),
           actions: [
+            if (_editLabel != null && !_offline)
+              IconButton(
+                tooltip: _editLabel,
+                icon: const Icon(Icons.edit_note),
+                // Unsaved edits here would be lost in the other app's copy.
+                onPressed: _dirty
+                    ? null
+                    : () {
+                        FileActions(context).editExternally(_item!);
+                        Navigator.of(context).pop();
+                      },
+              ),
             if (_editable)
               IconButton(
                 tooltip: 'Save',

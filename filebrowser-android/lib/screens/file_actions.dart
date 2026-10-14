@@ -10,6 +10,8 @@ import '../api/paths.dart';
 import '../app_routes.dart';
 import '../models/models.dart';
 import '../navigation_key.dart';
+import '../providers/device_files_provider.dart';
+import '../providers/external_edits_provider.dart';
 import '../providers/file_operations_provider.dart';
 import '../providers/files_provider.dart';
 import '../providers/offline_provider.dart';
@@ -402,11 +404,35 @@ class FileActions {
         '${path == '/' ? 'Home' : baseName(path)} is no longer available offline');
   }
 
+  /// Whether [item] can be handed to an editor app and saved back.
+  bool canEditExternally(FileItem item) {
+    final perm = ref.read(sessionProvider).valueOrNull?.perm;
+    return item.type == 'text' && perm != null && perm.modify && perm.download;
+  }
+
+  /// The label of the action that edits a text file in another app.
+  Future<String> editLabel() async {
+    final editor = await ref.read(deviceFilesProvider).editorName();
+    return editor == null ? 'Edit in another app' : 'Edit in $editor';
+  }
+
+  /// Opens [item] in TurboNotes (or another editor app); every save there
+  /// is uploaded back to the server.
+  Future<void> editExternally(FileItem item) async {
+    final session = ref.read(sessionProvider).valueOrNull;
+    if (session == null) return;
+    final error =
+        await ref.read(externalEditsProvider).start(session.api, item.path);
+    if (error != null) showMessage('Cannot edit ${item.name}: $error');
+  }
+
   Future<void> info(BuildContext context, FileItem item) => showDialog<void>(
       context: context, builder: (_) => _InfoDialog(item: item));
 
   /// The actions menu for one item, limited to what the account may do.
-  Future<void> showMenu(BuildContext context, FileItem item) {
+  Future<void> showMenu(BuildContext context, FileItem item) async {
+    final editLabel = canEditExternally(item) ? await this.editLabel() : null;
+    if (!context.mounted) return;
     return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -420,7 +446,7 @@ class FileActions {
                   ? 'Folder'
                   : '${formatSize(item.size)} · ${formatDate(item.modified)}'),
             ),
-            ..._menuTiles(context, sheet, item),
+            ..._menuTiles(context, sheet, item, editLabel),
           ]),
         ),
       ),
@@ -429,8 +455,8 @@ class FileActions {
 
   /// The entries of [showMenu]. Each closes the [sheet] before it runs, so
   /// the action's own dialogs open from [context], which outlives the sheet.
-  List<Widget> _menuTiles(
-      BuildContext context, BuildContext sheet, FileItem item) {
+  List<Widget> _menuTiles(BuildContext context, BuildContext sheet,
+      FileItem item, String? editLabel) {
     final perm = ref.read(requireSessionProvider).perm;
     final offline = ref.read(offlineProvider).store;
     final keptBy = offline?.pinCovering(item.path);
@@ -445,6 +471,8 @@ class FileActions {
         );
     return [
       tile(Icons.open_in_new, 'Open', () => open(context, item)),
+      if (editLabel != null)
+        tile(Icons.edit_note, editLabel, () => editExternally(item)),
       if (perm.download && opensInApp(item))
         tile(Icons.open_in_browser, 'Open with another app', () async {
           if (!await _openCopy(item)) await download(item, openWhenDone: true);

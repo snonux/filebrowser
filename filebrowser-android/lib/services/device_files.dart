@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -19,6 +20,17 @@ abstract interface class DeviceFiles {
   /// Opens [file] in the app Android picks for its type. Returns an error
   /// message, or null on success.
   Future<String?> open(File file);
+
+  /// Folder that files are copied into while another app edits them.
+  Future<Directory> editDirectory();
+
+  /// The app "Edit in" hands text files to (TurboNotes), or null when it
+  /// is not installed and the user picks one.
+  Future<String?> editorName();
+
+  /// Lets another app edit [file] in place (see [editDirectory]). Returns an
+  /// error message, or null on success.
+  Future<String?> edit(File file);
 }
 
 class PlatformDeviceFiles implements DeviceFiles {
@@ -61,5 +73,35 @@ class PlatformDeviceFiles implements DeviceFiles {
   Future<String?> open(File file) async {
     final result = await OpenFilex.open(file.path);
     return result.type == ResultType.done ? null : result.message;
+  }
+
+  static const _edit = MethodChannel('org.buetow.filebrowser/edit');
+
+  @override
+  Future<Directory> editDirectory() async {
+    // The cache directory, which the app's EditProvider serves from.
+    final dir = Directory('${(await getTemporaryDirectory()).path}/edit');
+    await dir.create(recursive: true);
+    return dir;
+  }
+
+  @override
+  Future<String?> editorName() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _edit.invokeMethod<String>('editorName');
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  @override
+  Future<String?> edit(File file) async {
+    if (!Platform.isAndroid) return open(file);
+    try {
+      return await _edit.invokeMethod<String>('edit', {'path': file.path});
+    } on PlatformException catch (e) {
+      return e.message ?? e.code;
+    }
   }
 }
