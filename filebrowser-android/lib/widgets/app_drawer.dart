@@ -45,6 +45,11 @@ class AppDrawer extends ConsumerWidget {
           },
         ),
         ListTile(
+          leading: const Icon(Icons.phone_android),
+          title: const Text('On this phone'),
+          onTap: () => go(AppRoutes.local('')),
+        ),
+        ListTile(
           leading: const Icon(Icons.offline_pin_outlined),
           title: const Text('Available offline'),
           onTap: () => go(AppRoutes.offline),

@@ -19,6 +19,7 @@ import 'package:filebrowser_android/providers/session_provider.dart';
 import 'package:filebrowser_android/providers/share_provider.dart';
 import 'package:filebrowser_android/services/credential_store.dart';
 import 'package:filebrowser_android/services/device_files.dart';
+import 'package:filebrowser_android/services/local_files.dart';
 import 'package:filebrowser_android/services/share_receiver.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -88,6 +89,23 @@ class FakeDeviceFiles implements DeviceFiles {
     edited.add(file);
     return null;
   }
+
+  /// The phone's storage, a folder of the test's own.
+  Directory get phone => Directory('${dir.path}/phone')..createSync();
+
+  /// Whether the user has granted "All files access"; the test grants it
+  /// through the app's "Allow access" button.
+  bool storageAccess = false;
+
+  @override
+  Future<List<StorageRoot>> storageRoots() async =>
+      [StorageRoot(name: 'Internal storage', path: phone.path)];
+
+  @override
+  Future<bool> hasStorageAccess() async => storageAccess;
+
+  @override
+  Future<bool> requestStorageAccess() async => storageAccess = true;
 }
 
 /// Stands in for Android's "Share" menu. Shares made before the app listens
@@ -928,6 +946,132 @@ void main() {
     await tap(tester, find.byTooltip('Cancel'));
     await waitFor(tester, find.text('readme.md'));
     expect(await exists('/projects/Note house.txt'), isFalse);
+  });
+
+  testWidgets('files on the phone, and moving them to and from the server',
+      (tester) async {
+    final phone = device.phone.path;
+    File('$phone/Download/photo.png')
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(await admin.readBytes('/photos/red.png'));
+    File('$phone/Music/song.mp3')
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(List.generate(3000, (i) => i % 256));
+    File('$phone/Trip/a.txt')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('day zero');
+    File('$phone/Trip/day1/b.txt')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('day one');
+    addTearDown(() async {
+      for (final path in ['/Trip', '/photos/photo.png']) {
+        await admin.delete(path).catchError((Object _) {});
+      }
+      if (!await exists('/zz-last.txt')) {
+        await admin.createFile('/zz-last.txt', content: utf8.encode('zzz\n'));
+      }
+    });
+
+    await launch(tester);
+    await login(tester, url: serverUrl, user: adminUser, password: adminPass);
+    await waitFor(tester, find.text('readme.md'));
+    await tap(tester, find.byTooltip('Open navigation menu'));
+    await tapText(tester, 'On this phone');
+
+    // Access to all files is asked for first.
+    await tapText(tester, 'Allow access');
+    await tapText(tester, 'Continue');
+    await waitFor(tester, find.text('Trip'));
+    expect(find.text('Download'), findsOneWidget);
+    expect(find.text('Music'), findsOneWidget);
+    await screenshot(tester, '9-phone');
+
+    // -- Managing the phone's files -----------------------------------------
+    await tap(tester, find.byTooltip('New folder'));
+    await enter(tester, 'Name', 'Inbox');
+    await tapText(tester, 'Create');
+    await waitFor(tester, find.text('Inbox'));
+    expect(Directory('$phone/Inbox').existsSync(), isTrue);
+
+    await tapText(tester, 'Music');
+    await itemAction(tester, 'song.mp3', 'Rename');
+    await enter(tester, 'Name', 'tune.mp3');
+    await tapText(tester, 'Rename');
+    await waitFor(tester, find.text('tune.mp3'));
+    expect(File('$phone/Music/tune.mp3').lengthSync(), 3000);
+
+    await itemAction(tester, 'tune.mp3', 'Move to…');
+    await tapText(tester, 'Parent folder');
+    await tapText(tester, 'Inbox');
+    await tapText(tester, 'Move here');
+    await waitFor(tester, find.text('Moved 1 item to Inbox'));
+    expect(File('$phone/Inbox/tune.mp3').lengthSync(), 3000);
+    expect(File('$phone/Music/tune.mp3').existsSync(), isFalse);
+    await waitFor(tester, find.text('This folder is empty'));
+    await back(tester);
+
+    await itemAction(tester, 'Trip', 'Copy to…');
+    await tapText(tester, 'Inbox');
+    await tapText(tester, 'Copy here');
+    await waitFor(tester, find.text('Copied 1 item to Inbox'));
+    expect(File('$phone/Inbox/Trip/day1/b.txt').readAsStringSync(), 'day one');
+
+    // -- Phone to server -----------------------------------------------------
+    await itemAction(tester, 'Trip', 'Upload to server…');
+    await tapText(tester, 'Upload here');
+    await waitFor(tester, find.text('Uploaded 1 item to Home on the server'));
+    expect((await admin.fetch('/Trip/a.txt')).item.content, 'day zero');
+    expect((await admin.fetch('/Trip/day1/b.txt')).item.content, 'day one');
+    expect(Directory('$phone/Trip').existsSync(), isTrue);
+
+    await tapText(tester, 'Download');
+    await itemAction(tester, 'photo.png', 'Move to server…');
+    await tapText(tester, 'photos');
+    await tapText(tester, 'Move here');
+    await waitFor(tester, find.text('Moved 1 item to photos on the server'));
+    expect(File('$phone/Download/photo.png').existsSync(), isFalse);
+    expect(sha256Of(await admin.readBytes('/photos/photo.png')),
+        sha256Of(await admin.readBytes('/photos/red.png')));
+    await waitFor(tester, find.text('This folder is empty'));
+    await back(tester);
+
+    // Selections: delete two folders at once.
+    await tester.longPress(find.text('Inbox'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tap(tester, find.text('Music'));
+    expect(find.text('2 selected'), findsOneWidget);
+    await tap(tester, find.byTooltip('More'));
+    await tapText(tester, 'Delete');
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await waitUntil(tester, () async => !Directory('$phone/Inbox').existsSync(),
+        'Inbox is deleted');
+    expect(Directory('$phone/Music').existsSync(), isFalse);
+
+    // -- Server to phone -----------------------------------------------------
+    await tap(tester, find.byTooltip('Open navigation menu'));
+    await tapText(tester, 'Home');
+    await waitFor(tester, find.text('readme.md'));
+    await itemAction(tester, 'projects', 'Save to phone…');
+    await tapText(tester, 'Download');
+    await tapText(tester, 'Save here');
+    await waitFor(tester, find.text('Saved 1 item to Download on this phone'));
+    expect(
+        sha256Of(
+            File('$phone/Download/projects/app/data.bin').readAsBytesSync()),
+        sha256Of(await admin.readBytes('/projects/app/data.bin')));
+    expect(await exists('/projects'), isTrue);
+
+    // The picker starts in the folder used last.
+    await itemAction(tester, 'zz-last.txt', 'Move to phone…');
+    await waitFor(tester, find.text('projects'));
+    await tapText(tester, 'Move here');
+    await waitFor(tester, find.text('Moved 1 item to Download on this phone'));
+    expect(File('$phone/Download/zz-last.txt').readAsStringSync(), 'zzz\n');
+    expect(await exists('/zz-last.txt'), isFalse);
+    await waitUntil(
+        tester,
+        () async => find.text('zz-last.txt').evaluate().isEmpty,
+        'zz-last.txt leaves the list');
   });
 
   testWidgets('read-only account sees no write actions', (tester) async {

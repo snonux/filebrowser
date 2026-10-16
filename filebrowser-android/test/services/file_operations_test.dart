@@ -10,6 +10,7 @@ import 'package:filebrowser_android/providers/session_provider.dart';
 import 'package:filebrowser_android/providers/transfers_provider.dart';
 import 'package:filebrowser_android/services/device_files.dart';
 import 'package:filebrowser_android/services/file_operations.dart';
+import 'package:filebrowser_android/services/local_files.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -49,6 +50,13 @@ class TestDeviceFiles implements DeviceFiles {
   Future<String?> editorName() async => null;
   @override
   Future<String?> edit(File file) async => null;
+  @override
+  Future<List<StorageRoot>> storageRoots() async =>
+      [StorageRoot(name: 'Internal storage', path: '${dir.path}/phone')];
+  @override
+  Future<bool> hasStorageAccess() async => true;
+  @override
+  Future<bool> requestStorageAccess() async => true;
 }
 
 FileItem item(String path) => FileItem(
@@ -315,5 +323,51 @@ void main() {
     expect((await pending).status, OperationStatus.cancelled);
     expect(dir.listSync(), isEmpty);
     operation.close();
+  });
+  test('downloadInto saves a server folder with everything in it', () async {
+    Map<String, dynamic> entry(String path, {bool dir = false}) => {
+          'path': path,
+          'name': path.substring(path.lastIndexOf('/') + 1),
+          'isDir': dir,
+          'size': 4,
+          'modified': '2026-01-01T00:00:00Z',
+          'type': dir ? '' : 'text',
+        };
+    oldAdapter = FakeAdapter((options) {
+      final path = Uri.decodeFull(options.uri.path);
+      return switch (path) {
+        '/api/resources/docs' => reply(200, body: {
+            ...entry('/docs', dir: true),
+            'items': [entry('/docs/sub', dir: true), entry('/docs/a.txt')],
+          }),
+        '/api/resources/docs/sub' => reply(200, body: {
+            ...entry('/docs/sub', dir: true),
+            'items': [entry('/docs/sub/b.txt')],
+          }),
+        '/api/raw/docs/a.txt' => reply(200, body: 'aaaa'),
+        '/api/raw/docs/sub/b.txt' => reply(200, body: 'bbbb'),
+        _ => reply(404),
+      };
+    });
+    alice.api.dio.httpClientAdapter = oldAdapter;
+    final phone = Directory('${dir.path}/phone')..createSync();
+    Directory('${phone.path}/docs').createSync();
+    final folder = FileItem(
+        path: '/docs',
+        name: 'docs',
+        size: 0,
+        modified: DateTime(2026),
+        isDir: true,
+        type: '');
+    final operation = begin();
+    final result = await operation.downloadInto(folder, phone.path);
+    operation.close();
+    expect(result.succeeded, isTrue, reason: result.error?.message);
+    // An existing folder of that name is left alone.
+    expect(result.value!.path, '${phone.path}/docs (1)');
+    expect(File('${phone.path}/docs (1)/a.txt').readAsStringSync(), 'aaaa');
+    expect(
+        File('${phone.path}/docs (1)/sub/b.txt').readAsStringSync(), 'bbbb');
+    expect(container.read(transfersProvider), hasLength(2));
   });
 }

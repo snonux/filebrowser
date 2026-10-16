@@ -44,6 +44,8 @@ void main() {
         ),
       ),
     ));
+    await tester.ensureVisible(find.text('Info'));
+    await tester.pump();
     await tester.tap(find.text('Info'));
     await tester.pumpAndSettle();
   }

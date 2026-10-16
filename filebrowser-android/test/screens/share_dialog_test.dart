@@ -146,6 +146,9 @@ void main() {
   }
 
   Future<void> tap(WidgetTester tester, Finder finder) async {
+    // The actions menu scrolls; bring the entry into view first.
+    await tester.ensureVisible(finder);
+    await tester.pump();
     await tester.tap(finder);
     await settle(tester);
   }

@@ -14,11 +14,13 @@ import '../providers/device_files_provider.dart';
 import '../providers/external_edits_provider.dart';
 import '../providers/file_operations_provider.dart';
 import '../providers/files_provider.dart';
+import '../providers/local_files_provider.dart';
 import '../providers/offline_provider.dart';
 import '../providers/session_provider.dart';
 import '../services/file_operations.dart';
 import '../utils/format.dart';
 import 'folder_picker_screen.dart';
+import 'local_actions.dart';
 import 'share_dialog.dart';
 
 /// Shows a short message at the bottom of the screen.
@@ -334,6 +336,86 @@ class FileActions {
     return result.succeeded;
   }
 
+  /// Uploads the phone file or folder [local] into the server folder [dir];
+  /// a folder with everything in it. Returns whether all of it arrived.
+  Future<bool> uploadLocal(
+      BuildContext context, FileItem local, String dir) async {
+    final operation = _begin();
+    try {
+      if (!local.isDir) {
+        return await _uploadFile(context, operation, File(local.path), dir);
+      }
+      final root = joinPath(dir, local.name);
+      final tree = await ref.read(localFilesProvider).walk(local.path);
+      for (final folder in ['', ...tree.folders]) {
+        final result = await operation
+            .createFolder(folder.isEmpty ? root : joinPath(root, folder));
+        // An existing folder is merged into.
+        if (!result.succeeded && result.status != OperationStatus.conflict) {
+          _report(result, prefix: 'Upload of ${local.name} failed: ');
+          return false;
+        }
+      }
+      var ok = true;
+      for (final file in tree.files) {
+        if (!context.mounted || operation.cancelled) return false;
+        final parent = parentOf('/$file');
+        ok &= await _uploadFile(context, operation, File('${local.path}/$file'),
+            joinPath(root, parent));
+      }
+      _refresh(dir);
+      return ok;
+    } on FileSystemException catch (e) {
+      showMessage(
+          'Upload of ${local.name} failed: ${e.osError?.message ?? e.message}');
+      return false;
+    } finally {
+      operation.close();
+    }
+  }
+
+  /// Saves [items] into a phone folder the user picks: files as they are,
+  /// folders with everything in them. With [move], each item is deleted on
+  /// the server once it is saved.
+  Future<void> saveToPhone(BuildContext context, List<FileItem> items,
+      {bool move = false}) async {
+    if (items.isEmpty) return;
+    final operation = _begin();
+    try {
+      final target = await pickPhoneFolder(context,
+          action: move ? 'Move here' : 'Save here');
+      if (target == null || operation.cancelled) return;
+      final roots = await ref.read(storageRootsProvider.future);
+      var done = 0;
+      for (final item in items) {
+        if (operation.cancelled) return;
+        final result = await operation.downloadInto(item, target);
+        if (!result.succeeded) {
+          _report(result, prefix: 'Saving ${item.name} failed: ');
+          continue;
+        }
+        if (move) {
+          final deleted = await operation.delete(item.path);
+          if (!deleted.succeeded) {
+            _report(deleted, prefix: 'Saved, but cannot delete ${item.name}: ');
+            continue;
+          }
+          await ref.read(offlineProvider.notifier).deleted(item.path);
+        }
+        done++;
+      }
+      ref.invalidate(localListingProvider(normalizePath(target)));
+      if (move) _refresh(parentOf(items.first.path));
+      if (done > 0) {
+        showMessage('${move ? 'Moved' : 'Saved'} $done '
+            '${done == 1 ? 'item' : 'items'} to '
+            '${phoneFolderLabel(roots, target)} on this phone');
+      }
+    } finally {
+      operation.close();
+    }
+  }
+
   /// Saves a file (or a folder as a zip) into the device's download folder.
   Future<File?> download(FileItem item, {bool openWhenDone = false}) async {
     final operation = _begin();
@@ -480,6 +562,12 @@ class FileActions {
       if (perm.download)
         tile(Icons.download, item.isDir ? 'Download as zip' : 'Download',
             () => download(item)),
+      if (perm.download)
+        tile(Icons.save_alt, 'Save to phone…',
+            () => saveToPhone(context, [item])),
+      if (perm.download && perm.delete)
+        tile(Icons.phone_android, 'Move to phone…',
+            () => saveToPhone(context, [item], move: true)),
       if (offline != null && keptBy == item.path)
         tile(Icons.offline_pin, 'Remove offline copy',
             () => removeOffline(item.path))

@@ -76,6 +76,15 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                 onPressed: () =>
                     setState(() => _selected.addAll(items.map((i) => i.path))),
               ),
+              if (perm.download)
+                IconButton(
+                  tooltip: 'Save to phone',
+                  icon: const Icon(Icons.save_alt),
+                  onPressed: () async {
+                    await actions.saveToPhone(context, _selectedItems(items));
+                    if (mounted) setState(_selected.clear);
+                  },
+                ),
               if (perm.create)
                 IconButton(
                   tooltip: 'Copy to',
@@ -117,7 +126,7 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                 icon: const Icon(Icons.search),
                 onPressed: () => context.push(AppRoutes.search(_path)),
               ),
-              const _SortMenu(),
+              const SortMenu(),
               PopupMenuButton<String>(
                 tooltip: 'More',
                 onSelected: (v) => switch (v) {
@@ -190,14 +199,14 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                 child: itemsAsync.when(
                   loading: () =>
                       const Center(child: CircularProgressIndicator()),
-                  error: (e, _) => _Message(
+                  error: (e, _) => ListMessage(
                     icon: Icons.error_outline,
                     text: ApiException.from(e).message,
                     action: TextButton(
                         onPressed: _refresh, child: const Text('Retry')),
                   ),
                   data: (items) => items.isEmpty
-                      ? const _Message(
+                      ? const ListMessage(
                           icon: Icons.folder_off_outlined,
                           text: 'This folder is empty')
                       : ListView.builder(
@@ -318,8 +327,8 @@ class _OfflineMark extends StatelessWidget {
   }
 }
 
-class _SortMenu extends ConsumerWidget {
-  const _SortMenu();
+class SortMenu extends ConsumerWidget {
+  const SortMenu({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -389,8 +398,9 @@ class _Breadcrumbs extends StatelessWidget {
   }
 }
 
-class _Message extends StatelessWidget {
-  const _Message({required this.icon, required this.text, this.action});
+class ListMessage extends StatelessWidget {
+  const ListMessage(
+      {super.key, required this.icon, required this.text, this.action});
 
   final IconData icon;
   final String text;

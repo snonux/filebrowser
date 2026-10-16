@@ -12,6 +12,7 @@ abstract final class AppRoutes {
   static const settings = '/settings';
   static const offline = '/offline';
   static const shareUpload = '/share-upload';
+  static const phone = '/phone';
 
   static String _with(String route, String path) =>
       Uri(path: route, queryParameters: {'path': path}).toString();
@@ -22,4 +23,7 @@ abstract final class AppRoutes {
   static String pdf(String path) => _with(pdfViewer, path);
   static String play(String path) => _with(player, path);
   static String search(String path) => _with(searchPage, path);
+
+  /// A folder on the phone; an empty [path] shows its storage volumes.
+  static String local(String path) => _with(phone, path);
 }

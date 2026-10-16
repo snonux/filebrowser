@@ -3,13 +3,22 @@
     <!-- Required for all calls to the File Browser server. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- open_filex declares broad shared-media permissions, but this app only
-         hands app-owned downloads to other apps through its FileProvider.
-         Uploads use Android's document picker, which grants access to the
-         selected URI without storage permissions. -->
+    <!-- "On this phone" manages the phone's files like a file manager, so
+         it needs all-files access on Android 11 and newer, and the storage
+         permissions on Android 10 and older. The user grants them from the
+         app's "Allow access" button. The narrower media permissions that
+         open_filex declares are not used. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
-        tools:node="remove" />
+        android:maxSdkVersion="29"
+        tools:node="replace" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"
+        tools:node="replace" />
     <uses-permission
         android:name="android.permission.READ_MEDIA_IMAGES"
         tools:node="remove" />
@@ -26,7 +35,8 @@
         android:label="File Browser"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:requestLegacyExternalStorage="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
