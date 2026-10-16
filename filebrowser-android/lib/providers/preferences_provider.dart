@@ -20,6 +20,8 @@ class Preferences {
     this.showHidden,
     this.shareFolder = '/',
     this.phoneFolder = '',
+    this.fingerprintAccount = '',
+    this.fingerprintDeclined = '',
   });
 
   final String serverUrl;
@@ -40,6 +42,14 @@ class Preferences {
 
   /// Phone folder that server files were last saved into; empty at first.
   final String phoneFolder;
+
+  /// The account (`user@server`) whose sign-in is kept behind the
+  /// fingerprint; empty when fingerprint sign-in is off.
+  final String fingerprintAccount;
+
+  /// The account for which the user said "Not now" to fingerprint sign-in,
+  /// so the app doesn't ask again after every password sign-in.
+  final String fingerprintDeclined;
 }
 
 class PreferencesNotifier extends Notifier<Preferences> {
@@ -60,6 +70,8 @@ class PreferencesNotifier extends Notifier<Preferences> {
       showHidden: _prefs.getBool('showHidden'),
       shareFolder: _prefs.getString('shareFolder') ?? '/',
       phoneFolder: _prefs.getString('phoneFolder') ?? '',
+      fingerprintAccount: _prefs.getString('fingerprintAccount') ?? '',
+      fingerprintDeclined: _prefs.getString('fingerprintDeclined') ?? '',
     );
   }
 
@@ -96,6 +108,16 @@ class PreferencesNotifier extends Notifier<Preferences> {
 
   Future<void> setPhoneFolder(String folder) async {
     await _prefs.setString('phoneFolder', folder);
+    ref.invalidateSelf();
+  }
+
+  Future<void> setFingerprintAccount(String account) async {
+    await _prefs.setString('fingerprintAccount', account);
+    ref.invalidateSelf();
+  }
+
+  Future<void> setFingerprintDeclined(String account) async {
+    await _prefs.setString('fingerprintDeclined', account);
     ref.invalidateSelf();
   }
 }

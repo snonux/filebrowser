@@ -1,3 +1,3 @@
 New "On this phone" in the menu: manage the files on your phone (browse, rename, copy, move, delete).
-Upload or move phone files and whole folders to the server, and save or move server files and folders into a phone folder you pick.
-Needs "All files access", which the app asks for the first time.
+Upload or move phone files and whole folders to the server, and save or move server files and folders into a phone folder you pick. Needs "All files access", which the app asks for the first time.
+Sign in with your fingerprint: after a password sign-in the app offers it, and Settings has a switch.
