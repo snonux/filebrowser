@@ -40,8 +40,7 @@ void main() {
     expect(() => files.createFolder(at('new')), throwsA(isA<LocalConflict>()));
   });
 
-  test('copy copies folders recursively and asks before replacing',
-      () async {
+  test('copy copies folders recursively and asks before replacing', () async {
     await files.copy(at('docs'), at('copy'));
     expect(File(at('copy/sub/deep.md')).readAsStringSync(), 'deep');
     expect(File(at('docs/sub/deep.md')).existsSync(), isTrue);

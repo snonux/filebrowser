@@ -366,8 +366,7 @@ void main() {
     // An existing folder of that name is left alone.
     expect(result.value!.path, '${phone.path}/docs (1)');
     expect(File('${phone.path}/docs (1)/a.txt').readAsStringSync(), 'aaaa');
-    expect(
-        File('${phone.path}/docs (1)/sub/b.txt').readAsStringSync(), 'bbbb');
+    expect(File('${phone.path}/docs (1)/sub/b.txt').readAsStringSync(), 'bbbb');
     expect(container.read(transfersProvider), hasLength(2));
   });
 }

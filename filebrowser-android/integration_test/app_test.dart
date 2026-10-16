@@ -1132,6 +1132,141 @@ void main() {
         'zz-last.txt leaves the list');
   });
 
+  testWidgets('bookmarks open server, offline and phone items quickly',
+      (tester) async {
+    final gate = await TcpGate.start(Uri.parse(serverUrl));
+    addTearDown(gate.close);
+    await admin.createFolder('/marks/deep/');
+    addTearDown(() => admin.delete('/marks').catchError((Object _) {}));
+    await admin.createFile('/marks/deep/plan.txt',
+        content: utf8.encode('bookmarked text'));
+    final phone = device.phone.path;
+    final note = File('$phone/Docs/note.txt')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('on the phone');
+    addTearDown(() {
+      if (Directory('$phone/Docs').existsSync()) {
+        Directory('$phone/Docs').deleteSync(recursive: true);
+      }
+    });
+
+    Finder inDrawer(String text) => find.descendant(
+        of: find.byType(NavigationDrawer), matching: find.text(text));
+    Future<void> openDrawer() =>
+        tap(tester, find.byTooltip('Open navigation menu'));
+
+    await launch(tester);
+    await login(tester, url: gate.url, user: adminUser, password: adminPass);
+    await waitFor(tester, find.text('readme.md'));
+
+    // -- Bookmarking on the server -------------------------------------------
+    await itemAction(tester, 'readme.md', 'Add bookmark');
+    await waitFor(tester, find.text('Bookmarked readme.md'));
+    await tapText(tester, 'marks');
+    await tap(tester, find.byTooltip('More'));
+    await tapText(tester, 'Bookmark this folder');
+    await waitFor(tester, find.text('Bookmarked marks'));
+    await tapText(tester, 'deep');
+    await itemAction(tester, 'plan.txt', 'Make available offline');
+    await waitFor(tester, find.text('plan.txt is available offline'));
+    await itemAction(tester, 'plan.txt', 'Add bookmark');
+    await waitFor(tester, find.text('Bookmarked plan.txt'));
+    // The menu now offers to remove it.
+    await tap(tester, find.byTooltip('Actions for plan.txt'));
+    await waitFor(tester, find.text('Remove bookmark'));
+    await tester.tapAt(const Offset(10, 10)); // Closes the menu.
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // -- Opening from the drawer ---------------------------------------------
+    await tapText(tester, 'Home');
+    await waitFor(tester, find.text('zz-last.txt'));
+    await openDrawer();
+    await waitFor(tester, inDrawer('plan.txt'));
+    expect(inDrawer('marks'), findsOneWidget);
+    expect(inDrawer('readme.md'), findsOneWidget);
+    expect(inDrawer('Server · /marks/deep'), findsOneWidget);
+    await screenshot(tester, '11-bookmarks-drawer');
+    await tap(tester, inDrawer('plan.txt'));
+    await waitFor(tester, find.text('bookmarked text'));
+    await back(tester);
+    await openDrawer();
+    await tap(tester, inDrawer('marks'));
+    await waitFor(tester, find.text('deep'));
+
+    // A rename in the app moves the bookmarks inside the folder along.
+    await itemAction(tester, 'deep', 'Rename');
+    await enter(tester, 'Name', 'deeper');
+    await tap(tester, find.widgetWithText(FilledButton, 'Rename'));
+    await waitFor(tester, find.text('deeper'));
+    await back(tester);
+    await openDrawer();
+    await waitFor(tester, inDrawer('Server · /marks/deeper'));
+
+    // -- Bookmarking on the phone --------------------------------------------
+    await tap(tester, inDrawer('On this phone'));
+    if (!device.storageAccess) {
+      await tapText(tester, 'Allow access');
+      await tapText(tester, 'Continue');
+    }
+    await waitFor(tester, find.text('Docs'));
+    await tap(tester, find.byTooltip('More'));
+    await tapText(tester, 'Bookmark this folder');
+    await waitFor(tester, find.text('Bookmarked Internal storage'));
+    await tapText(tester, 'Docs');
+    await itemAction(tester, 'note.txt', 'Add bookmark');
+    await waitFor(tester, find.text('Bookmarked note.txt'));
+    await back(tester);
+    await back(tester);
+    await waitFor(tester, find.text('zz-last.txt'));
+    await openDrawer();
+    await waitFor(tester, inDrawer('Phone · Internal storage/Docs'));
+    final opened = device.opened.length;
+    await tap(tester, inDrawer('note.txt'));
+    await waitUntil(tester, () async => device.opened.length > opened,
+        'note.txt handed to another app');
+    expect(device.opened.last.path, note.path);
+
+    // -- Without the server: the offline copy opens --------------------------
+    await gate.shut();
+    await openDrawer();
+    await tap(tester, inDrawer('plan.txt'));
+    await waitFor(tester, find.text('bookmarked text'));
+    expect(find.textContaining('This is the offline copy'), findsOneWidget);
+    await back(tester);
+    await gate.open();
+
+    // -- A phone file deleted by another app ---------------------------------
+    note.deleteSync();
+    await openDrawer();
+    await tap(tester, inDrawer('note.txt'));
+    await waitFor(tester, find.text('note.txt is no longer on this phone'));
+    await tapText(tester, 'Remove');
+    await openDrawer();
+    await waitFor(tester, inDrawer('Internal storage'));
+    expect(inDrawer('note.txt'), findsNothing);
+
+    // -- Managing bookmarks ---------------------------------------------------
+    await tap(tester, inDrawer('Bookmarks'));
+    await waitFor(tester, find.text('readme.md'));
+    await screenshot(tester, '12-bookmarks');
+    await tap(tester, find.byTooltip('Remove bookmark of readme.md'));
+    await waitFor(tester, find.text('Removed the bookmark of readme.md'));
+    expect(find.byTooltip('Remove bookmark of readme.md'), findsNothing);
+    await tap(tester, find.byTooltip('Remove bookmark of Internal storage'));
+    await back(tester);
+
+    // Deleting a folder in the app drops the bookmarks in it.
+    await waitFor(tester, find.text('marks'));
+    await itemAction(tester, 'marks', 'Delete');
+    await tap(tester, find.widgetWithText(FilledButton, 'Delete'));
+    await waitUntil(
+        tester, () async => !await exists('/marks'), 'marks deleted');
+    await openDrawer();
+    await tap(tester, inDrawer('Bookmarks'));
+    await waitFor(tester, find.textContaining('No bookmarks yet'));
+  });
+
   testWidgets('read-only account sees no write actions', (tester) async {
     await launch(tester);
     await login(tester, url: serverUrl, user: viewerUser, password: viewerPass);

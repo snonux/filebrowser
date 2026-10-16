@@ -6,6 +6,7 @@ import '../api/filebrowser_api.dart';
 import '../api/paths.dart';
 import '../app_routes.dart';
 import '../models/models.dart';
+import '../providers/bookmarks_provider.dart';
 import '../providers/files_provider.dart';
 import '../providers/offline_provider.dart';
 import '../providers/preferences_provider.dart';
@@ -60,6 +61,16 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
     final offline = ref.watch(offlineProvider).store;
     final actions = FileActions(context);
     final title = _path == '/' ? 'Home' : baseName(_path);
+    final folder = FileItem(
+        path: _path,
+        name: _path == '/' ? 'files' : baseName(_path),
+        size: 0,
+        modified: DateTime.now(),
+        isDir: true,
+        type: '');
+    final bookmarked = ref
+        .watch(bookmarksProvider)
+        .any((b) => b.place == BookmarkPlace.server && b.path == _path);
 
     final appBar = _selecting
         ? AppBar(
@@ -133,13 +144,8 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                   'hidden' => ref
                       .read(preferencesProvider.notifier)
                       .setShowHidden(!ref.read(showHiddenProvider)),
-                  'zip' => actions.download(FileItem(
-                      path: _path,
-                      name: _path == '/' ? 'files' : baseName(_path),
-                      size: 0,
-                      modified: DateTime.now(),
-                      isDir: true,
-                      type: '')),
+                  'zip' => actions.download(folder),
+                  'bookmark' => actions.toggleBookmark(folder),
                   'refresh' => _refresh(),
                   _ => null,
                 },
@@ -149,6 +155,11 @@ class _BrowserScreenState extends ConsumerState<BrowserScreen> {
                     checked: ref.watch(showHiddenProvider),
                     child: const Text('Show hidden files'),
                   ),
+                  PopupMenuItem(
+                      value: 'bookmark',
+                      child: Text(bookmarked
+                          ? 'Remove bookmark'
+                          : 'Bookmark this folder')),
                   if (perm.download)
                     const PopupMenuItem(
                         value: 'zip', child: Text('Download folder as zip')),

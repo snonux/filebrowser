@@ -10,6 +10,7 @@ import '../api/paths.dart';
 import '../app_routes.dart';
 import '../models/models.dart';
 import '../navigation_key.dart';
+import '../providers/bookmarks_provider.dart';
 import '../providers/device_files_provider.dart';
 import '../providers/external_edits_provider.dart';
 import '../providers/file_operations_provider.dart';
@@ -105,6 +106,36 @@ class FileActions {
 
   void _refresh(String dir) =>
       ref.invalidate(resourceProvider(normalizePath(dir)));
+
+  /// Lets offline copies and bookmarks follow a rename or move.
+  Future<void> _moved(String from, String to) async {
+    await ref.read(offlineProvider.notifier).moved(from, to);
+    await ref
+        .read(bookmarksProvider.notifier)
+        .moved(BookmarkPlace.server, from, to);
+  }
+
+  /// Drops offline copies and bookmarks of a deleted item.
+  Future<void> _deleted(String path) async {
+    await ref.read(offlineProvider.notifier).deleted(path);
+    await ref
+        .read(bookmarksProvider.notifier)
+        .deleted(BookmarkPlace.server, path);
+  }
+
+  /// Bookmarks [item], or removes its bookmark, and says so.
+  Future<void> toggleBookmark(FileItem item) async {
+    final bookmarks = ref.read(bookmarksProvider.notifier);
+    final existing = bookmarks.find(BookmarkPlace.server, item.path);
+    final name = item.path == '/' ? 'Home' : item.name;
+    if (existing != null) {
+      await bookmarks.remove(existing);
+      showMessage('Removed the bookmark of $name');
+    } else {
+      await bookmarks.addServer(item);
+      showMessage('Bookmarked $name');
+    }
+  }
 
   /// Whether [open] shows the file in the app rather than another app.
   static bool opensInApp(FileItem item) =>
@@ -210,7 +241,7 @@ class FileActions {
       final result = await operation.transfer(item.path, target, copy: false);
       if (result.succeeded) {
         _refresh(dir);
-        await ref.read(offlineProvider.notifier).moved(item.path, target);
+        await _moved(item.path, target);
       }
       _report(result);
     } finally {
@@ -248,9 +279,7 @@ class FileActions {
         }
         if (result.succeeded) {
           done++;
-          if (!copy) {
-            await ref.read(offlineProvider.notifier).moved(item.path, dest);
-          }
+          if (!copy) await _moved(item.path, dest);
         }
         _report(result);
       }
@@ -282,9 +311,7 @@ class FileActions {
       for (final item in items) {
         final result = await operation.delete(item.path);
         if (result.status == OperationStatus.cancelled) return false;
-        if (result.succeeded) {
-          await ref.read(offlineProvider.notifier).deleted(item.path);
-        }
+        if (result.succeeded) await _deleted(item.path);
         _report(result, prefix: '${item.name}: ');
       }
       _refresh(parentOf(items.first.path));
@@ -400,7 +427,7 @@ class FileActions {
             _report(deleted, prefix: 'Saved, but cannot delete ${item.name}: ');
             continue;
           }
-          await ref.read(offlineProvider.notifier).deleted(item.path);
+          await _deleted(item.path);
         }
         done++;
       }
@@ -542,6 +569,10 @@ class FileActions {
     final perm = ref.read(requireSessionProvider).perm;
     final offline = ref.read(offlineProvider).store;
     final keptBy = offline?.pinCovering(item.path);
+    final bookmarked = ref
+            .read(bookmarksProvider.notifier)
+            .find(BookmarkPlace.server, item.path) !=
+        null;
     Widget tile(IconData icon, String label, Future<void> Function() run) =>
         ListTile(
           leading: Icon(icon),
@@ -568,6 +599,12 @@ class FileActions {
       if (perm.download && perm.delete)
         tile(Icons.phone_android, 'Move to phone…',
             () => saveToPhone(context, [item], move: true)),
+      if (bookmarked)
+        tile(Icons.bookmark_remove_outlined, 'Remove bookmark',
+            () => toggleBookmark(item))
+      else
+        tile(Icons.bookmark_add_outlined, 'Add bookmark',
+            () => toggleBookmark(item)),
       if (offline != null && keptBy == item.path)
         tile(Icons.offline_pin, 'Remove offline copy',
             () => removeOffline(item.path))

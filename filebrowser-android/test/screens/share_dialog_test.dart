@@ -5,12 +5,15 @@ import 'package:dio/dio.dart';
 import 'package:filebrowser_android/api/filebrowser_api.dart';
 import 'package:filebrowser_android/models/models.dart';
 import 'package:filebrowser_android/navigation_key.dart';
+import 'package:filebrowser_android/providers/preferences_provider.dart';
 import 'package:filebrowser_android/providers/session_provider.dart';
+import 'package:filebrowser_android/services/credential_store.dart';
 import 'package:filebrowser_android/screens/file_actions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/fake_adapter.dart';
 
@@ -120,8 +123,14 @@ void main() {
       ..token = 'a.b.c';
     final session =
         Session(api: api, user: UserInfo(id: 1, username: 'alice', perm: perm));
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(ProviderScope(
-      overrides: [requireSessionProvider.overrideWithValue(session)],
+      overrides: [
+        requireSessionProvider.overrideWithValue(session),
+        sharedPreferencesProvider.overrideWithValue(prefs),
+        credentialStoreProvider.overrideWithValue(MemoryCredentialStore()),
+      ],
       child: MaterialApp(
         scaffoldMessengerKey: appMessengerKey,
         home: Scaffold(

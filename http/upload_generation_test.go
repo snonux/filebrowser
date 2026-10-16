@@ -199,7 +199,9 @@ func TestUploadGenerationCleanup(t *testing.T) {
 					}
 					if err != nil {
 						close(release)
-						<-done
+						if doneErr := <-done; doneErr != nil {
+							t.Log(doneErr)
+						}
 						t.Skip(err)
 					}
 					dst = "/alias"

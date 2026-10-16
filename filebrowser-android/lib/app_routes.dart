@@ -13,6 +13,7 @@ abstract final class AppRoutes {
   static const offline = '/offline';
   static const shareUpload = '/share-upload';
   static const phone = '/phone';
+  static const bookmarks = '/bookmarks';
 
   static String _with(String route, String path) =>
       Uri(path: route, queryParameters: {'path': path}).toString();

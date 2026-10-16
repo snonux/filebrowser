@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../api/paths.dart';
 import '../app_routes.dart';
 import '../models/models.dart';
+import '../providers/bookmarks_provider.dart';
 import '../providers/files_provider.dart';
 import '../providers/local_files_provider.dart';
 import '../providers/preferences_provider.dart';
@@ -134,6 +135,9 @@ class _LocalBrowserScreenState extends ConsumerState<LocalBrowserScreen>
     final title =
         root != null && root.path == path ? root.name : baseName(path);
     final canUpload = session.perm.create;
+    final bookmarked = ref
+        .watch(bookmarksProvider)
+        .any((b) => b.place == BookmarkPlace.phone && b.path == path);
 
     Future<void> thenClear(Future<void> action) async {
       await action;
@@ -193,6 +197,13 @@ class _LocalBrowserScreenState extends ConsumerState<LocalBrowserScreen>
                       .read(preferencesProvider.notifier)
                       .setShowHidden(!ref.read(showHiddenProvider)),
                   'refresh' => _refresh(path),
+                  'bookmark' => actions.toggleBookmark(FileItem(
+                      path: path,
+                      name: title,
+                      size: 0,
+                      modified: DateTime.now(),
+                      isDir: true,
+                      type: '')),
                   _ => null,
                 },
                 itemBuilder: (_) => [
@@ -201,6 +212,11 @@ class _LocalBrowserScreenState extends ConsumerState<LocalBrowserScreen>
                     checked: ref.watch(showHiddenProvider),
                     child: const Text('Show hidden files'),
                   ),
+                  PopupMenuItem(
+                      value: 'bookmark',
+                      child: Text(bookmarked
+                          ? 'Remove bookmark'
+                          : 'Bookmark this folder')),
                   const PopupMenuItem(value: 'refresh', child: Text('Refresh')),
                 ],
               ),

@@ -127,7 +127,8 @@ void main() {
     expect(store.listing('/docs/sub/b.txt'), isNull);
   });
 
-  test('changes on the server are followed; unchanged files are not '
+  test(
+      'changes on the server are followed; unchanged files are not '
       'downloaded again', () async {
     final store = await open();
     await store.pin('/docs');
