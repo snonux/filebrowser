@@ -14,6 +14,9 @@ dependencies:
   # flutter_secure_storage: keeps the JWT and the remembered password in the
   # Android keystore-backed encrypted storage.
   flutter_secure_storage: ^9.2.2
+  # biometric_storage: fingerprint sign-in; the password is encrypted with a
+  # keystore key that only unlocks after a biometric check.
+  biometric_storage: ^5.0.1
   # flutter_riverpod: state management, same as the Player app.
   flutter_riverpod: ^2.6.1
   # go_router: declarative routing with an auth redirect.

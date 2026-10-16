@@ -13,6 +13,14 @@ The installed app version appears at the bottom of **Settings**.
   storage, so the app signs in again by itself when the server's session
   expires (File Browser sessions last two hours by default and cannot be
   extended once expired). Without it, the app returns to the sign-in screen.
+- **Sign in with fingerprint.** After a password sign-in on a phone with an
+  enrolled fingerprint, the app offers to use the fingerprint next time. The
+  password is then encrypted with an Android keystore key that only unlocks
+  after a fingerprint check (`biometric_storage`), and the sign-in screen gets
+  a **Sign in with fingerprint** button. Logging out keeps it; Settings turns
+  it on or off. Password sign-in always works. If the password changes on the
+  server or new fingerprints are enrolled (which invalidates the key), the app
+  turns fingerprint sign-in off and asks for the password.
 - **Proxy login** for servers behind a reverse proxy that asks for a username
   and password (HTTP basic auth). The proxy credentials are sent with every
   request to that server, including thumbnails and uploads.

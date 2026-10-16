@@ -62,3 +62,9 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // AppCompat themes for MainActivity: the fingerprint prompt
+    // (biometric_storage, androidx.biometric) needs them on Android 9 and older.
+    implementation("androidx.appcompat:appcompat:1.7.0")
+}

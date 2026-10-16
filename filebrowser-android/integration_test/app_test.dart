@@ -14,9 +14,11 @@ import 'package:filebrowser_android/api/filebrowser_api.dart';
 import 'package:filebrowser_android/app.dart';
 import 'package:filebrowser_android/models/models.dart';
 import 'package:filebrowser_android/providers/device_files_provider.dart';
+import 'package:filebrowser_android/providers/fingerprint_provider.dart';
 import 'package:filebrowser_android/providers/preferences_provider.dart';
 import 'package:filebrowser_android/providers/session_provider.dart';
 import 'package:filebrowser_android/providers/share_provider.dart';
+import 'package:filebrowser_android/services/biometric_login.dart';
 import 'package:filebrowser_android/services/credential_store.dart';
 import 'package:filebrowser_android/services/device_files.dart';
 import 'package:filebrowser_android/services/share_receiver.dart';
@@ -169,6 +171,7 @@ late SharedPreferences prefs;
 late MemoryCredentialStore store;
 late FakeDeviceFiles device;
 late FakeShareReceiver shares;
+late MemoryBiometricVault vault;
 late FileBrowserApi admin;
 
 Future<void> launch(WidgetTester tester) async {
@@ -183,6 +186,7 @@ Future<void> launch(WidgetTester tester) async {
       credentialStoreProvider.overrideWithValue(store),
       deviceFilesProvider.overrideWithValue(device),
       shareReceiverProvider.overrideWithValue(shares),
+      biometricVaultProvider.overrideWithValue(vault),
     ],
     child: RepaintBoundary(key: _shotKey, child: const FileBrowserApp()),
   ));
@@ -344,6 +348,9 @@ void main() {
     prefs = await SharedPreferences.getInstance();
     store = MemoryCredentialStore();
     shares = FakeShareReceiver();
+    // No fingerprint unless a test enrolls one, so logins aren't followed
+    // by the fingerprint offer.
+    vault = MemoryBiometricVault(available: false);
   });
 
   testWidgets('login, browse and every file operation', (tester) async {
@@ -770,6 +777,53 @@ void main() {
     await waitFor(tester, find.text('Sign in'));
     expect((await store.read()).token, isNull);
     expect((await store.read()).password, isNull);
+  });
+
+  testWidgets('fingerprint sign-in after logout', (tester) async {
+    vault.available = true;
+    await launch(tester);
+    await login(tester,
+        url: serverUrl, user: adminUser, password: adminPass, stay: false);
+    await waitFor(tester, find.text('Sign in with your fingerprint?'));
+    await tapText(tester, 'Use fingerprint');
+    await waitFor(tester, find.text('readme.md'));
+    expect(vault.stored?.password, adminPass);
+    expect((await store.read()).password, isNull);
+
+    await tap(tester, find.byTooltip('Open navigation menu'));
+    await tapText(tester, 'Settings');
+    expect(
+        tester
+            .widget<SwitchListTile>(
+                find.widgetWithText(SwitchListTile, 'Sign in with fingerprint'))
+            .value,
+        isTrue);
+    await tapText(tester, 'Log out');
+    await tap(tester, find.widgetWithText(FilledButton, 'Log out'));
+    await waitFor(tester, find.text('Sign in'));
+
+    // A dismissed prompt stays on the sign-in screen.
+    vault.error = const BiometricCanceled();
+    await tapText(tester, 'Sign in with fingerprint');
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Sign in'), findsOneWidget);
+
+    vault.error = null;
+    await tapText(tester, 'Sign in with fingerprint');
+    await waitFor(tester, find.text('readme.md'));
+    // No second offer for the account that already uses it.
+    expect(find.text('Sign in with your fingerprint?'), findsNothing);
+
+    // Turning it off in Settings removes the button.
+    await tap(tester, find.byTooltip('Open navigation menu'));
+    await tapText(tester, 'Settings');
+    await tap(tester,
+        find.widgetWithText(SwitchListTile, 'Sign in with fingerprint'));
+    await tapText(tester, 'Log out');
+    await tap(tester, find.widgetWithText(FilledButton, 'Log out'));
+    await waitFor(tester, find.text('Sign in'));
+    expect(find.text('Sign in with fingerprint'), findsNothing);
+    expect(vault.stored, isNull);
   });
 
   testWidgets('expired session without a saved password returns to login',

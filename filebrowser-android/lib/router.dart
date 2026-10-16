@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'app_routes.dart';
+import 'navigation_key.dart';
 import 'providers/session_provider.dart';
 import 'providers/share_provider.dart';
 import 'screens/browser_screen.dart';
@@ -36,6 +37,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       state.uri.queryParameters['path'] ?? '/';
 
   return GoRouter(
+    navigatorKey: appNavigatorKey,
     initialLocation: AppRoutes.files('/'),
     refreshListenable: refresh,
     redirect: (context, state) {
