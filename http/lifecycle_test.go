@@ -80,8 +80,8 @@ func TestPreviewUsesRequestContextAndJoinsPublication(t *testing.T) {
 		t.Fatal("preview lost request context")
 	}
 	select {
-	case <-done:
-		t.Fatal("preview returned with cache write outstanding")
+	case err := <-done:
+		t.Fatalf("preview returned with cache write outstanding: %v", err)
 	default:
 	}
 	close(cache.release)
