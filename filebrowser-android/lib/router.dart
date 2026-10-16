@@ -6,6 +6,7 @@ import 'app_routes.dart';
 import 'navigation_key.dart';
 import 'providers/session_provider.dart';
 import 'providers/share_provider.dart';
+import 'screens/bookmarks_screen.dart';
 import 'screens/browser_screen.dart';
 import 'screens/image_viewer_screen.dart';
 import 'screens/local_browser_screen.dart';
@@ -99,6 +100,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.phone,
         builder: (context, state) =>
             LocalBrowserScreen(path: state.uri.queryParameters['path'] ?? ''),
+      ),
+      GoRoute(
+        path: AppRoutes.bookmarks,
+        builder: (context, state) => const BookmarksScreen(),
       ),
       GoRoute(
         path: AppRoutes.settings,

@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../api/paths.dart';
 import '../app_routes.dart';
 import '../models/models.dart';
+import '../providers/bookmarks_provider.dart';
 import '../providers/device_files_provider.dart';
 import '../providers/local_files_provider.dart';
 import '../providers/preferences_provider.dart';
@@ -81,6 +82,19 @@ class LocalActions {
   final FileActions _server;
 
   LocalFiles get _files => ref.read(localFilesProvider);
+  BookmarksNotifier get _bookmarks => ref.read(bookmarksProvider.notifier);
+
+  /// Bookmarks [item], or removes its bookmark, and says so.
+  Future<void> toggleBookmark(FileItem item) async {
+    final existing = _bookmarks.find(BookmarkPlace.phone, item.path);
+    if (existing != null) {
+      await _bookmarks.remove(existing);
+      showMessage('Removed the bookmark of ${item.name}');
+    } else {
+      await _bookmarks.addPhone(item);
+      showMessage('Bookmarked ${item.name}');
+    }
+  }
 
   void _refresh(String dir) =>
       ref.invalidate(localListingProvider(normalizePath(dir)));
@@ -126,7 +140,10 @@ class LocalActions {
         title: 'Rename', action: 'Rename', initial: item.name);
     if (name == null || name == item.name) return;
     final dir = parentOf(item.path);
-    await _try(() => _files.move(item.path, joinPath(dir, name)));
+    final target = joinPath(dir, name);
+    if (await _try(() => _files.move(item.path, target))) {
+      await _bookmarks.moved(BookmarkPlace.phone, item.path, target);
+    }
     _refresh(dir);
   }
 
@@ -164,7 +181,10 @@ class LocalActions {
       } on FileSystemException catch (e) {
         showMessage('${item.name}: ${e.osError?.message ?? e.message}');
       }
-      if (ok) done++;
+      if (ok) {
+        done++;
+        if (!copy) await _bookmarks.moved(BookmarkPlace.phone, item.path, dest);
+      }
     }
     _refresh(source);
     _refresh(target);
@@ -186,7 +206,10 @@ class LocalActions {
     );
     if (!ok) return false;
     for (final item in items) {
-      await _try(() => _files.delete(item.path), prefix: '${item.name}: ');
+      if (await _try(() => _files.delete(item.path),
+          prefix: '${item.name}: ')) {
+        await _bookmarks.deleted(BookmarkPlace.phone, item.path);
+      }
     }
     _refresh(parentOf(items.first.path));
     return true;
@@ -215,6 +238,7 @@ class LocalActions {
               prefix: 'Uploaded, but cannot delete ${item.name}: ')) {
         continue;
       }
+      if (move) await _bookmarks.deleted(BookmarkPlace.phone, item.path);
       done++;
     }
     _refresh(parentOf(items.first.path));
@@ -229,6 +253,7 @@ class LocalActions {
   Future<void> showMenu(BuildContext context, FileItem item) {
     final canUpload =
         ref.read(sessionProvider).valueOrNull?.perm.create ?? false;
+    final bookmarked = _bookmarks.find(BookmarkPlace.phone, item.path) != null;
     return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -259,6 +284,12 @@ class LocalActions {
                 tile(Icons.drive_folder_upload_outlined, 'Move to server…',
                     () => sendToServer(context, [item], move: true)),
               ],
+              if (bookmarked)
+                tile(Icons.bookmark_remove_outlined, 'Remove bookmark',
+                    () => toggleBookmark(item))
+              else
+                tile(Icons.bookmark_add_outlined, 'Add bookmark',
+                    () => toggleBookmark(item)),
               tile(Icons.drive_file_rename_outline, 'Rename',
                   () => rename(context, item)),
               tile(Icons.copy, 'Copy to…',

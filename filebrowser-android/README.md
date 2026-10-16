@@ -80,6 +80,14 @@ The installed app version appears at the bottom of **Settings**.
   of it arrived). On the server, **Save to phone…** and **Move to phone…**
   store files or whole folders (not zipped) into a phone folder you pick;
   the last one is remembered, and taken names get a ` (1)` suffix.
+- **Bookmarks**: **Add bookmark** in the ⋮ menu of a file or folder, on the
+  server or on the phone, or **Bookmark this folder** in a folder's ⋮ menu at
+  the top. Bookmarks are listed in the drawer, where one tap opens the folder
+  or file; **Bookmarks** in the drawer lists them all for removing. Server
+  bookmarks belong to the server and account that made them and open from the
+  offline copy when the server cannot be reached. They are kept on the
+  device, follow a rename or move made in the app, and go away when the item
+  is deleted in the app.
 - **Search** below the current folder.
 - **Share links** with the options of the web UI: an optional lifetime in
   seconds, minutes, hours or days, and an optional password. **Share link** on

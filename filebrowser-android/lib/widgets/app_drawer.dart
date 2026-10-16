@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../app_routes.dart';
 import '../models/models.dart';
+import '../providers/bookmarks_provider.dart';
 import '../providers/session_provider.dart';
+import '../screens/bookmarks_screen.dart';
 import '../utils/format.dart';
 
 final _usageProvider = FutureProvider.autoDispose<DiskUsage>(
@@ -19,6 +21,7 @@ class AppDrawer extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(requireSessionProvider);
     final usage = ref.watch(_usageProvider);
+    final bookmarks = ref.watch(bookmarksProvider);
     void go(String route) {
       Navigator.pop(context);
       context.push(route);
@@ -65,6 +68,21 @@ class AppDrawer extends ConsumerWidget {
           title: const Text('Settings'),
           onTap: () => go(AppRoutes.settings),
         ),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.bookmarks_outlined),
+          title: const Text('Bookmarks'),
+          trailing: bookmarks.isEmpty
+              ? null
+              : const Icon(Icons.edit_outlined, semanticLabel: 'Manage'),
+          onTap: () => go(AppRoutes.bookmarks),
+        ),
+        for (final bookmark in bookmarks)
+          BookmarkTile(
+            key: ValueKey('${bookmark.place.name}:${bookmark.path}'),
+            bookmark: bookmark,
+            onOpen: () => Navigator.pop(context),
+          ),
         const Divider(),
         Padding(
           padding: const EdgeInsets.fromLTRB(28, 8, 28, 16),
