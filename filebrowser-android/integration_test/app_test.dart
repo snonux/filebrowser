@@ -990,14 +990,19 @@ void main() {
     await tap(tester, find.byTooltip('New folder'));
     await enter(tester, 'Name', 'Inbox');
     await tapText(tester, 'Create');
-    await waitFor(tester, find.text('Inbox'));
-    expect(Directory('$phone/Inbox').existsSync(), isTrue);
+    await waitUntil(tester, () async => Directory('$phone/Inbox').existsSync(),
+        'Inbox is created');
+    await waitFor(tester, find.widgetWithText(ListTile, 'Inbox'));
 
     await tapText(tester, 'Music');
     await itemAction(tester, 'song.mp3', 'Rename');
     await enter(tester, 'Name', 'tune.mp3');
-    await tapText(tester, 'Rename');
-    await waitFor(tester, find.text('tune.mp3'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Rename'));
+    await waitUntil(
+        tester,
+        () async => File('$phone/Music/tune.mp3').existsSync(),
+        'song.mp3 is renamed');
+    await waitFor(tester, find.widgetWithText(ListTile, 'tune.mp3'));
     expect(File('$phone/Music/tune.mp3').lengthSync(), 3000);
 
     await itemAction(tester, 'tune.mp3', 'Move to…');
@@ -1048,8 +1053,7 @@ void main() {
     expect(Directory('$phone/Music').existsSync(), isFalse);
 
     // -- Server to phone -----------------------------------------------------
-    await tap(tester, find.byTooltip('Open navigation menu'));
-    await tapText(tester, 'Home');
+    await back(tester);
     await waitFor(tester, find.text('readme.md'));
     await itemAction(tester, 'projects', 'Save to phone…');
     await tapText(tester, 'Download');
