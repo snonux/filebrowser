@@ -1,3 +1,3 @@
-Share files and text from other apps to File Browser and upload them into a folder you pick.
-New "Edit in TurboNotes" in the menu of text and Markdown files: every save in TurboNotes is uploaded back to the server.
-If the file changed on the server meanwhile, your edits are kept as a copy next to it instead of overwriting.
+New "On this phone" in the menu: manage the files on your phone (browse, rename, copy, move, delete).
+Upload or move phone files and whole folders to the server, and save or move server files and folders into a phone folder you pick. Needs "All files access", which the app asks for the first time.
+Sign in with your fingerprint: after a password sign-in the app offers it, and Settings has a switch.

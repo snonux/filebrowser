@@ -1,5 +1,6 @@
 package org.buetow.filebrowser
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
@@ -7,9 +8,12 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.storage.StorageManager
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.webkit.MimeTypeMap
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -26,11 +30,15 @@ import java.io.File
  *
  * It also lends text files to TurboNotes for "Edit in TurboNotes" (the
  * `org.buetow.filebrowser/edit` channel, files served by [EditProvider]).
+ *
+ * "On this phone" asks it for the storage volumes and for access to all
+ * files (the `org.buetow.filebrowser/storage` channel).
  */
 class MainActivity : FlutterFragmentActivity() {
     private var channel: MethodChannel? = null
     private var pending: Map<String, Any?>? = null
     private val main = Handler(Looper.getMainLooper())
+    private var accessResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,6 +80,90 @@ class MainActivity : FlutterFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, STORAGE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "roots" -> result.success(storageRoots())
+                    "hasAccess" -> result.success(hasStorageAccess())
+                    "requestAccess" -> requestStorageAccess(result)
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /** Mounted volumes: internal storage first, then SD cards and USB drives. */
+    private fun storageRoots(): List<Map<String, String>> {
+        val roots = mutableListOf<Map<String, String>>()
+        if (Build.VERSION.SDK_INT >= 30) {
+            val storage = getSystemService(StorageManager::class.java)
+            for (volume in storage.storageVolumes) {
+                val dir = volume.directory ?: continue
+                if (volume.state != Environment.MEDIA_MOUNTED) continue
+                val name = if (volume.isPrimary) INTERNAL else volume.getDescription(this)
+                roots.add(mapOf("name" to name, "path" to dir.absolutePath))
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            roots.add(mapOf("name" to INTERNAL,
+                "path" to Environment.getExternalStorageDirectory().absolutePath))
+            // Other volumes show up as their own app folder; their root is
+            // the part before Android/data.
+            getExternalFilesDirs(null).drop(1).filterNotNull().forEach {
+                roots.add(mapOf("name" to "SD card",
+                    "path" to it.absolutePath.substringBefore("/Android/data/")))
+            }
+        }
+        return roots.sortedByDescending { it["name"] == INTERNAL }
+    }
+
+    private fun hasStorageAccess(): Boolean =
+        if (Build.VERSION.SDK_INT >= 30) {
+            Environment.isExternalStorageManager()
+        } else {
+            checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
+        }
+
+    /** Opens the "All files access" setting (Android 11+) or asks for the
+     *  storage permission; answers [result] when the user comes back. */
+    private fun requestStorageAccess(result: MethodChannel.Result) {
+        if (hasStorageAccess()) {
+            result.success(true)
+            return
+        }
+        accessResult?.success(false)
+        accessResult = result
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                startActivityForResult(
+                    Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:$packageName")), REQUEST_ACCESS)
+            } catch (e: ActivityNotFoundException) {
+                startActivityForResult(
+                    Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION), REQUEST_ACCESS)
+            }
+        } else {
+            requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE), REQUEST_ACCESS)
+        }
+    }
+
+    private fun finishAccessRequest() {
+        accessResult?.success(hasStorageAccess())
+        accessResult = null
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_ACCESS) finishAccessRequest()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_ACCESS) finishAccessRequest()
     }
 
     private fun editIntent(file: File): Intent {
@@ -211,6 +303,9 @@ class MainActivity : FlutterFragmentActivity() {
     companion object {
         private const val CHANNEL = "org.buetow.filebrowser/share"
         private const val EDIT_CHANNEL = "org.buetow.filebrowser/edit"
+        private const val STORAGE_CHANNEL = "org.buetow.filebrowser/storage"
+        private const val REQUEST_ACCESS = 4711
+        private const val INTERNAL = "Internal storage"
 
         /** Text files open in TurboNotes when it is installed. */
         private const val TURBONOTES = "org.buetow.turbonotes"

@@ -19,6 +19,7 @@ class Preferences {
     this.sortAscending = true,
     this.showHidden,
     this.shareFolder = '/',
+    this.phoneFolder = '',
     this.fingerprintAccount = '',
     this.fingerprintDeclined = '',
   });
@@ -38,6 +39,9 @@ class Preferences {
 
   /// Folder that shares from other apps were last uploaded to.
   final String shareFolder;
+
+  /// Phone folder that server files were last saved into; empty at first.
+  final String phoneFolder;
 
   /// The account (`user@server`) whose sign-in is kept behind the
   /// fingerprint; empty when fingerprint sign-in is off.
@@ -65,6 +69,7 @@ class PreferencesNotifier extends Notifier<Preferences> {
       sortAscending: _prefs.getBool('sortAscending') ?? true,
       showHidden: _prefs.getBool('showHidden'),
       shareFolder: _prefs.getString('shareFolder') ?? '/',
+      phoneFolder: _prefs.getString('phoneFolder') ?? '',
       fingerprintAccount: _prefs.getString('fingerprintAccount') ?? '',
       fingerprintDeclined: _prefs.getString('fingerprintDeclined') ?? '',
     );
@@ -98,6 +103,11 @@ class PreferencesNotifier extends Notifier<Preferences> {
 
   Future<void> setShareFolder(String folder) async {
     await _prefs.setString('shareFolder', folder);
+    ref.invalidateSelf();
+  }
+
+  Future<void> setPhoneFolder(String folder) async {
+    await _prefs.setString('phoneFolder', folder);
     ref.invalidateSelf();
   }
 

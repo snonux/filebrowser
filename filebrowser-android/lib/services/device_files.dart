@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'local_files.dart';
+
 /// Access to files on the device: picking uploads, the download folder, and
 /// opening a downloaded file in another app. Tests replace it with a fake.
 abstract interface class DeviceFiles {
@@ -31,6 +33,17 @@ abstract interface class DeviceFiles {
   /// Lets another app edit [file] in place (see [editDirectory]). Returns an
   /// error message, or null on success.
   Future<String?> edit(File file);
+
+  /// The phone's storage volumes that "On this phone" browses.
+  Future<List<StorageRoot>> storageRoots();
+
+  /// Whether the app may read and write all of the phone's files.
+  Future<bool> hasStorageAccess();
+
+  /// Asks the user for [hasStorageAccess]: the system's "All files access"
+  /// screen, or the storage permission prompt on Android 10 and older.
+  /// Returns whether access was granted.
+  Future<bool> requestStorageAccess();
 }
 
 class PlatformDeviceFiles implements DeviceFiles {
@@ -103,5 +116,32 @@ class PlatformDeviceFiles implements DeviceFiles {
     } on PlatformException catch (e) {
       return e.message ?? e.code;
     }
+  }
+
+  static const _storage = MethodChannel('org.buetow.filebrowser/storage');
+
+  @override
+  Future<List<StorageRoot>> storageRoots() async {
+    if (!Platform.isAndroid) {
+      final home = Platform.environment['HOME'] ?? Directory.current.path;
+      return [StorageRoot(name: 'Home', path: home)];
+    }
+    final roots = await _storage.invokeListMethod<Map>('roots') ?? const [];
+    return [
+      for (final root in roots)
+        StorageRoot(name: root['name'] as String, path: root['path'] as String),
+    ];
+  }
+
+  @override
+  Future<bool> hasStorageAccess() async {
+    if (!Platform.isAndroid) return true;
+    return await _storage.invokeMethod<bool>('hasAccess') ?? false;
+  }
+
+  @override
+  Future<bool> requestStorageAccess() async {
+    if (!Platform.isAndroid) return true;
+    return await _storage.invokeMethod<bool>('requestAccess') ?? false;
   }
 }

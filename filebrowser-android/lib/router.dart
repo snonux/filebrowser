@@ -8,6 +8,7 @@ import 'providers/session_provider.dart';
 import 'providers/share_provider.dart';
 import 'screens/browser_screen.dart';
 import 'screens/image_viewer_screen.dart';
+import 'screens/local_browser_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/media_player_screen.dart';
 import 'screens/offline_screen.dart';
@@ -93,6 +94,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.shareUpload,
         builder: (context, state) => const ShareUploadScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.phone,
+        builder: (context, state) =>
+            LocalBrowserScreen(path: state.uri.queryParameters['path'] ?? ''),
       ),
       GoRoute(
         path: AppRoutes.settings,

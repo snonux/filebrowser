@@ -52,15 +52,21 @@ class FileOperations {
     }
   }
 
-  File _reserve(Directory dir, String name) {
-    final dot = name.lastIndexOf('.');
+  /// A free path for [name] in [dir] (`name (1).ext` when taken), held
+  /// until the caller releases it from [_destinations].
+  FileSystemEntity _reserve(Directory dir, String name, {bool folder = false}) {
+    final dot = folder ? -1 : name.lastIndexOf('.');
     final stem = dot > 0 ? name.substring(0, dot) : name;
     final ext = dot > 0 ? name.substring(dot) : '';
-    var target = File('${dir.path}/$name');
+    FileSystemEntity at(String n) =>
+        folder ? Directory('${dir.path}/$n') : File('${dir.path}/$n');
+    var target = at(name);
     for (var i = 1;
-        target.existsSync() || _destinations.contains(target.absolute.path);
+        FileSystemEntity.typeSync(target.path) !=
+                FileSystemEntityType.notFound ||
+            _destinations.contains(target.absolute.path);
         i++) {
-      target = File('${dir.path}/$stem ($i)$ext');
+      target = at('$stem ($i)$ext');
     }
     _destinations.add(target.absolute.path);
     return target;
@@ -155,18 +161,85 @@ class FileOperation {
     return result;
   }
 
+  /// Saves [item] (a file, or a folder as a zip) into the download folder.
   Future<OperationResult<File>> download(FileItem item) async {
+    final Directory dir;
+    try {
+      dir = await _owner.deviceFiles.downloadDirectory();
+    } catch (error) {
+      return OperationResult(OperationStatus.failed,
+          error: ApiException.from(error));
+    }
+    // The device dialog may have outlived the initiating account.
+    if (cancelled) return const OperationResult(OperationStatus.cancelled);
+    return _downloadFile(item, dir, archive: item.isDir);
+  }
+
+  /// Saves [item] into the phone folder [dir]: a file as is, a folder with
+  /// everything in it. A name that is taken gets a ` (1)` suffix. Returns
+  /// the new file or folder.
+  Future<OperationResult<FileSystemEntity>> downloadInto(
+      FileItem item, String dir) async {
+    if (!item.isDir) return _downloadFile(item, Directory(dir));
+    final Directory target;
+    try {
+      target =
+          _owner._reserve(Directory(dir), item.name, folder: true) as Directory;
+    } catch (error) {
+      return OperationResult(OperationStatus.failed,
+          error: ApiException.from(error));
+    }
+    try {
+      target.createSync(recursive: true);
+      final result = await _downloadTree(item.path, target);
+      return result.succeeded
+          ? OperationResult(OperationStatus.success, value: target)
+          : OperationResult(result.status, error: result.error);
+    } on FileSystemException catch (error) {
+      return OperationResult(OperationStatus.failed,
+          error: ApiException('$error'));
+    } finally {
+      _owner._destinations.remove(target.absolute.path);
+    }
+  }
+
+  /// Downloads the contents of the server folder [path] into [dir].
+  Future<OperationResult<void>> _downloadTree(
+      String path, Directory dir) async {
+    final listing =
+        await _request(() => _session!.api.fetch(path, cancelToken: _cancel));
+    if (!listing.succeeded) {
+      return OperationResult(listing.status, error: listing.error);
+    }
+    for (final child in listing.value!.items) {
+      if (cancelled) return const OperationResult(OperationStatus.cancelled);
+      final OperationResult<dynamic> result;
+      if (child.isDir) {
+        final sub = Directory('${dir.path}/${child.name}');
+        sub.createSync();
+        result = await _downloadTree(child.path, sub);
+      } else {
+        result = await _downloadFile(child, dir);
+      }
+      if (!result.succeeded) {
+        return OperationResult(result.status, error: result.error);
+      }
+    }
+    return const OperationResult(OperationStatus.success);
+  }
+
+  /// Downloads one file (or, with [archive], a folder as a zip) into [dir]
+  /// under a free name, with progress in the transfer bar.
+  Future<OperationResult<File>> _downloadFile(FileItem item, Directory dir,
+      {bool archive = false}) async {
     File? target;
     int? id;
-    final name = item.isDir ? '${item.name}.zip' : item.name;
+    final name = archive ? '${item.name}.zip' : item.name;
     var result = await _request(() async {
-      final dir = await _owner.deviceFiles.downloadDirectory();
-      // The device dialog may have outlived the initiating account.
-      if (cancelled) throw _cancel.cancelError!;
-      target = _owner._reserve(dir, name);
+      target = _owner._reserve(dir, name) as File;
       id = _owner.transfers.start(TransferKind.download, name);
       await _session!.api.download(item.path, target!.path,
-          archive: item.isDir ? 'zip' : null,
+          archive: archive ? 'zip' : null,
           cancelToken: _cancel, onProgress: (received, total) {
         if (!cancelled) {
           _owner.transfers

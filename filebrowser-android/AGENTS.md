@@ -16,6 +16,10 @@ flutter_secure_storage.
   user-facing feature has a step there.
 - Platform access (file picker, download folder, opening files) goes through
   `lib/services/device_files.dart` so tests can replace it.
+- "On this phone": `lib/services/local_files.dart` does the file work with
+  plain `dart:io`, which needs `MANAGE_EXTERNAL_STORAGE` (all-files access);
+  `MainActivity.kt` answers storage roots and the access request on the
+  `org.buetow.filebrowser/storage` channel.
 - "Edit in TurboNotes": `lib/services/external_edits.dart` downloads the
   file into the cache, `MainActivity.kt` lends it to TurboNotes
   (`org.buetow.turbonotes`) with `ACTION_EDIT` through `EditProvider.kt`
