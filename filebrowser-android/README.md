@@ -61,6 +61,17 @@ The installed app version appears at the bottom of **Settings**.
   kept files open as usual (text files read-only). Copies live in
   `Android/data/org.buetow.filebrowser/files/offline`, one folder per server
   and account, and are removed with the app.
+- **On this phone** (drawer): a file manager for the phone's own storage
+  (internal storage, and SD cards or USB drives when mounted). It needs
+  Android's "All files access", which the **Allow access** button opens
+  (on Android 10 and older, the storage permission). Folders, sorting,
+  hidden files, new folder, **rename**, **copy to**, **move to** and
+  **delete** work as on the server, for one item or a selection.
+  **Upload to server…** and **Move to server…** send files or whole folders
+  into a server folder you pick (a move deletes the phone copy only once all
+  of it arrived). On the server, **Save to phone…** and **Move to phone…**
+  store files or whole folders (not zipped) into a phone folder you pick;
+  the last one is remembered, and taken names get a ` (1)` suffix.
 - **Search** below the current folder.
 - **Share links** with the options of the web UI: an optional lifetime in
   seconds, minutes, hours or days, and an optional password. **Share link** on
